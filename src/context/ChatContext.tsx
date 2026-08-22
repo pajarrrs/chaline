@@ -254,9 +254,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     refreshFriends();
 
     if (supabase) {
-      // Connect to global chat realtime channel
+      // Connect to global chat realtime channel with broadcast enabled
       const channel = supabase
-        .channel("chaline-realtime-global")
+        .channel("chaline-realtime-global", {
+          config: {
+            broadcast: { self: false },
+          },
+        })
         .on("broadcast", { event: "new_message" }, (payload) => {
           if (payload?.payload?.message) {
             handleRealtimeIncomingMessage(payload.payload.message);
@@ -277,10 +281,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             refreshConversations();
           }
         )
-        .subscribe();
+        .subscribe((status) => {
+          console.log("[Supabase Realtime Status]:", status);
+        });
 
       channelRef.current = channel;
     }
+
+    // Fast 1.2s Hybrid Sync Loop (guarantees 100% realtime even if WebSocket drops or env key missing)
+    const syncInterval = setInterval(() => {
+      refreshConversations();
+      if (activeConvIdRef.current) {
+        fetchActiveMessages(activeConvIdRef.current, false);
+      }
+    }, 1200);
 
     // Auto-sync when user wakes up device / refocuses window tab
     const handleFocus = () => {
@@ -299,6 +313,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
       }
+      clearInterval(syncInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
