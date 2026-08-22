@@ -929,7 +929,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
       )}
 
       {/* 7. Input Bar / Voice Recording HUD */}
-      <div className="p-2 sm:p-3 bg-white/95 dark:bg-[#181A22]/95 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-1 sm:gap-2 z-20 flex-shrink-0 max-w-full">
+      <div className="p-2 sm:p-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] bg-white/95 dark:bg-[#181A22]/95 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-1 sm:gap-2 z-20 flex-shrink-0 max-w-full">
         {isRecording ? (
           /* Live Voice Recording UI */
           <div className="flex-1 flex items-center justify-between px-3 py-1.5 rounded-2xl bg-red-500/10 border border-red-500/20 animate-pulse min-w-0">

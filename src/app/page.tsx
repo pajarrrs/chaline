@@ -45,7 +45,7 @@ export default function HomeDashboard() {
       {/* 3. Right Active Chat Area */}
       <section
         className={`w-full md:w-auto md:flex-1 h-full min-h-0 ${
-          activeConversation ? "flex" : "hidden md:flex"
+          activeConversation ? "fixed inset-0 z-30 md:static md:inset-auto flex" : "hidden md:flex"
         }`}
       >
         <ChatArea onBackMobile={() => selectConversation(null)} />
