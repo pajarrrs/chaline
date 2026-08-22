@@ -162,7 +162,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         const newMessages: Message[] = data.messages || [];
-        setMessages(newMessages);
+
+        setMessages((prev) => {
+          // Keep pending optimistic messages (temp_...) until confirmed by server
+          const pending = prev.filter((m) => m.id.startsWith("temp_"));
+          if (pending.length === 0) return newMessages;
+
+          const serverIds = new Set(newMessages.map((m) => m.id));
+          const stillPending = pending.filter((p) => !serverIds.has(p.id));
+          return [...newMessages, ...stillPending];
+        });
 
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
@@ -419,6 +428,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         }
 
         refreshConversations();
+      } else {
+        console.error("Failed to send message:", await res.text());
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        alert("Failed to send message. Please check your connection.");
       }
     } catch (e) {
       console.error("Failed to send message:", e);
