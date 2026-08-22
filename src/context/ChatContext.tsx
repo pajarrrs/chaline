@@ -9,6 +9,7 @@ import {
   requestNotificationPermission,
   showBrowserNotification,
 } from "@/lib/notification";
+import { supabase } from "@/lib/supabase";
 
 interface ChatContextType {
   activeTab: "chats" | "friends";
@@ -195,34 +196,91 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Fast Real-time Polling every 1.2 seconds + Focus listener
+  // Supabase Realtime WebSockets Listener
   useEffect(() => {
     if (!user) return;
     refreshConversations();
     refreshFriends();
 
-    const doPoll = () => {
+    if (!supabase) {
+      // Fallback polling if Supabase env is not configured yet
+      const interval = setInterval(() => {
+        refreshConversations();
+        if (activeConvIdRef.current) {
+          fetchActiveMessages(activeConvIdRef.current, false);
+        }
+      }, 1500);
+      return () => clearInterval(interval);
+    }
+
+    // Realtime Channel for instant 0ms WebSockets
+    const channel = supabase
+      .channel("chaline-realtime-messages")
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "Message",
+        },
+        (payload) => {
+          const newMsg = payload.new as any;
+          if (!newMsg) return;
+
+          // If viewing this conversation, instantly reload messages
+          if (activeConvIdRef.current === newMsg.conversationId) {
+            fetchActiveMessages(newMsg.conversationId, false);
+          }
+
+          // Trigger sound if from another user and not sent by me
+          if (
+            newMsg.senderId !== currentUserIdRef.current &&
+            !sentMessageIdsRef.current.has(newMsg.id)
+          ) {
+            playNotificationSound();
+          }
+
+          refreshConversations();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "Conversation",
+        },
+        () => {
+          refreshConversations();
+        }
+      )
+      .subscribe();
+
+    // Gentle fallback sync every 5 seconds + on window focus
+    const fallbackInterval = setInterval(() => {
       refreshConversations();
       if (activeConvIdRef.current) {
         fetchActiveMessages(activeConvIdRef.current, false);
       }
-    };
+    }, 5000);
 
-    const interval = setInterval(doPoll, 1200);
-
-    const handleVisibilityOrFocus = () => {
+    const handleFocus = () => {
       if (document.visibilityState === "visible") {
-        doPoll();
+        refreshConversations();
+        if (activeConvIdRef.current) {
+          fetchActiveMessages(activeConvIdRef.current, false);
+        }
       }
     };
 
-    window.addEventListener("focus", handleVisibilityOrFocus);
-    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleFocus);
 
     return () => {
-      clearInterval(interval);
-      window.removeEventListener("focus", handleVisibilityOrFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      supabase.removeChannel(channel);
+      clearInterval(fallbackInterval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleFocus);
     };
   }, [user, refreshConversations, refreshFriends, fetchActiveMessages]);
 
