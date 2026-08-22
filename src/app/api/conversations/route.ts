@@ -18,6 +18,7 @@ export async function GET(req: NextRequest) {
           },
         },
       },
+      take: 30,
       include: {
         participants: {
           include: {
