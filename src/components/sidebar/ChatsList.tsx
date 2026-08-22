@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { Search, MessageSquare, Plus, Sparkles } from "lucide-react";
+import { Search, MessageSquare, Plus, Sparkles, Sun, Moon } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
+import { useTheme } from "next-themes";
 
 export function ChatsList() {
   const { user } = useAuth();
@@ -14,6 +15,9 @@ export function ChatsList() {
     setActiveTab,
   } = useChat();
   const [search, setSearch] = useState("");
+  const { resolvedTheme, setTheme } = useTheme();
+
+  const isDark = resolvedTheme === "dark";
 
   const filteredConversations = conversations.filter((conv) => {
     const otherParticipant = conv.participants.find(
@@ -46,23 +50,43 @@ export function ChatsList() {
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-white dark:bg-[#181A22] border-r border-black/[0.06] dark:border-white/[0.08] select-none">
+    <div className="w-full h-full flex flex-col bg-white dark:bg-[#181A22] border-r border-black/[0.06] dark:border-white/[0.08] select-none min-h-0">
       {/* Top Header */}
-      <div className="p-4 flex items-center justify-between border-b border-black/[0.04] dark:border-white/[0.05]">
-        <h2 className="text-lg font-black text-neutral-900 dark:text-white">
-          Chats
-        </h2>
-        <button
-          onClick={() => setActiveTab("friends")}
-          className="p-2 rounded-xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.05] transition-colors"
-          title="Start New Chat"
-        >
-          <Plus className="w-5 h-5" />
-        </button>
+      <div className="p-4 flex items-center justify-between border-b border-black/[0.04] dark:border-white/[0.05] flex-shrink-0">
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-black text-neutral-900 dark:text-white">
+            Chats
+          </h2>
+          <span className="text-xs px-2 py-0.5 rounded-full bg-[#06C755]/10 text-[#06C755] font-bold">
+            {conversations.length}
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          {/* Theme toggle on mobile */}
+          <button
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+            className="md:hidden p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:hover:text-white transition-colors"
+          >
+            {isDark ? (
+              <Sun className="w-4 h-4 text-amber-400" />
+            ) : (
+              <Moon className="w-4 h-4 text-indigo-500" />
+            )}
+          </button>
+
+          <button
+            onClick={() => setActiveTab("friends")}
+            className="p-2 rounded-xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.05] transition-colors"
+            title="Start New Chat"
+          >
+            <Plus className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       {/* Search Bar */}
-      <div className="px-4 py-2.5">
+      <div className="px-4 py-2.5 flex-shrink-0">
         <div className="flex items-center gap-2 px-3 py-2 rounded-2xl bg-neutral-100 dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/[0.06]">
           <Search className="w-4 h-4 text-neutral-400" />
           <input
@@ -76,7 +100,7 @@ export function ChatsList() {
       </div>
 
       {/* Conversations List */}
-      <div className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
+      <div className="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1.5 pb-24 md:pb-6 min-h-0">
         {filteredConversations.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-neutral-400 gap-3">
             <MessageSquare className="w-10 h-10 text-[#06C755] opacity-50" />
