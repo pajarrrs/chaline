@@ -10,6 +10,7 @@ export function ChatsList() {
   const { user } = useAuth();
   const {
     conversations,
+    loadingConversations,
     activeConversation,
     selectConversation,
     setActiveTab,
@@ -103,7 +104,20 @@ export function ChatsList() {
 
       {/* Conversations List */}
       <div className="flex-1 overflow-y-auto px-3 py-2 flex flex-col gap-1.5 pb-24 md:pb-6 min-h-0">
-        {filteredConversations.length === 0 ? (
+        {loadingConversations && conversations.length === 0 ? (
+          /* Skeleton Loader */
+          <div className="flex flex-col gap-2 p-1 animate-pulse">
+            {[1, 2, 3, 4].map((n) => (
+              <div key={n} className="flex items-center gap-3 p-3 rounded-2xl bg-neutral-100/60 dark:bg-white/[0.03]">
+                <div className="w-12 h-12 rounded-full bg-neutral-300 dark:bg-neutral-700 flex-shrink-0" />
+                <div className="flex-1 flex flex-col gap-2 min-w-0">
+                  <div className="w-24 h-3 rounded-md bg-neutral-300 dark:bg-neutral-700" />
+                  <div className="w-40 h-2.5 rounded-md bg-neutral-200 dark:bg-neutral-800" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : filteredConversations.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-neutral-400 gap-3">
             <MessageSquare className="w-10 h-10 text-[#06C755] opacity-50" />
             <div className="flex flex-col gap-1">

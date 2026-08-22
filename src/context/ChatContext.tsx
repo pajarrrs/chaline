@@ -16,6 +16,8 @@ interface ChatContextType {
   setActiveTab: (tab: "chats" | "friends") => void;
   conversations: Conversation[];
   friends: Friend[];
+  loadingConversations: boolean;
+  loadingFriends: boolean;
   activeConversation: Conversation | null;
   messages: Message[];
   loadingMessages: boolean;
@@ -52,6 +54,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [activeTab, setActiveTab] = useState<"chats" | "friends">("chats");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
+  const [loadingConversations, setLoadingConversations] = useState(true);
+  const [loadingFriends, setLoadingFriends] = useState(true);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -71,6 +75,28 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const channelRef = useRef<any>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messageCacheRef = useRef<Record<string, Message[]>>({});
+
+  // Restore client-side cache from localStorage on first paint (0 ms!)
+  useEffect(() => {
+    try {
+      const cachedConvs = localStorage.getItem("chaline_cache_convs");
+      if (cachedConvs) {
+        const parsed = JSON.parse(cachedConvs);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setConversations(parsed);
+          setLoadingConversations(false);
+        }
+      }
+      const cachedFriends = localStorage.getItem("chaline_cache_friends");
+      if (cachedFriends) {
+        const parsed = JSON.parse(cachedFriends);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setFriends(parsed);
+          setLoadingFriends(false);
+        }
+      }
+    } catch {}
+  }, []);
 
   // Keep refs in sync
   useEffect(() => {
@@ -137,6 +163,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         const newConversations: Conversation[] = data.conversations || [];
         setConversations(newConversations);
+        try {
+          localStorage.setItem("chaline_cache_convs", JSON.stringify(newConversations));
+        } catch {}
 
         if (activeConvIdRef.current) {
           const matched = newConversations.find(
@@ -149,6 +178,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.error("Error loading conversations:", e);
+    } finally {
+      setLoadingConversations(false);
     }
   }, [user]);
 
@@ -159,10 +190,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/friends");
       if (res.ok) {
         const data = await res.json();
-        setFriends(data.friends || []);
+        const newFriends: Friend[] = data.friends || [];
+        setFriends(newFriends);
+        try {
+          localStorage.setItem("chaline_cache_friends", JSON.stringify(newFriends));
+        } catch {}
       }
     } catch (e) {
       console.error("Error loading friends:", e);
+    } finally {
+      setLoadingFriends(false);
     }
   }, [user]);
 
@@ -252,7 +289,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           return prev;
         }
 
-        return prev
+        const updated = prev
           .map((c) => {
             if (c.id === newMsg.conversationId) {
               return {
@@ -268,6 +305,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             (a, b) =>
               new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
           );
+
+        try {
+          localStorage.setItem("chaline_cache_convs", JSON.stringify(updated));
+        } catch {}
+
+        return updated;
       });
     },
     [user, refreshConversations, broadcastReadStatus]
@@ -582,6 +625,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setActiveTab,
         conversations,
         friends,
+        loadingConversations,
+        loadingFriends,
         activeConversation,
         messages,
         loadingMessages,

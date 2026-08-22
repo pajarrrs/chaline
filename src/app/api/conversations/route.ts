@@ -36,15 +36,13 @@ export async function GET(req: NextRequest) {
         messages: {
           orderBy: { createdAt: "desc" },
           take: 1,
-          include: {
-            sender: {
-              select: {
-                id: true,
-                lineId: true,
-                name: true,
-                avatar: true,
-              },
-            },
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            mediaUrl: true,
+            senderId: true,
+            createdAt: true,
           },
         },
       },
