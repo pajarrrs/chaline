@@ -423,43 +423,35 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           )
       );
 
-      const res = await fetch(
-        `/api/conversations/${activeConversation.id}/messages`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            content: content.trim(),
-            type,
-            mediaUrl,
-            replyToId,
-          }),
-        }
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        const serverMessage = data.message;
-        sentMessageIdsRef.current.add(serverMessage.id);
-
-        // Replace optimistic temp message with confirmed server message
-        setMessages((prev) =>
-          prev.map((m) => (m.id === tempId ? serverMessage : m))
-        );
-
-        // Broadcast to other users via WebSocket (Instant 0 ms delivery, ZERO API calls on receiver!)
-        if (channelRef.current) {
-          channelRef.current.send({
-            type: "broadcast",
-            event: "new_message",
-            payload: { message: serverMessage },
-          });
-        }
-      } else {
-        console.error("Failed to send message:", await res.text());
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        alert("Failed to send message. Please check your connection.");
+      // Instant 0ms WebSocket Broadcast to receiver!
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "new_message",
+          payload: { message: tempMessage },
+        });
       }
+
+      // Asynchronous background persistence to Supabase
+      fetch(`/api/conversations/${activeConversation.id}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: tempId,
+          content: content.trim(),
+          type,
+          mediaUrl,
+          replyToId,
+        }),
+      })
+        .then((res) => {
+          if (!res.ok) {
+            console.warn("Message failed to persist in DB");
+          }
+        })
+        .catch((err) => {
+          console.error("Failed to persist message:", err);
+        });
     } catch (e) {
       console.error("Failed to send message:", e);
     }

@@ -14,86 +14,70 @@ export async function GET(
 
     const { id: conversationId } = await params;
 
-    // Check membership
-    const participant = await prisma.conversationParticipant.findUnique({
-      where: {
-        conversationId_userId: {
-          conversationId,
-          userId: session.userId,
-        },
-      },
-    });
-
-    if (!participant) {
-      return NextResponse.json(
-        { error: "Conversation not found or access denied." },
-        { status: 403 }
-      );
-    }
-
-    // Update lastReadAt for current user
-    await prisma.conversationParticipant.update({
-      where: {
-        conversationId_userId: {
-          conversationId,
-          userId: session.userId,
-        },
-      },
-      data: {
-        lastReadAt: new Date(),
-      },
-    });
-
-    // Fetch messages with replyTo data
-    const messages = await prisma.message.findMany({
-      where: { conversationId },
-      include: {
-        sender: {
-          select: {
-            id: true,
-            lineId: true,
-            name: true,
-            avatar: true,
+    // Fetch messages + participants in parallel
+    const [messages, conversation] = await Promise.all([
+      prisma.message.findMany({
+        where: { conversationId },
+        take: 50,
+        include: {
+          sender: {
+            select: {
+              id: true,
+              lineId: true,
+              name: true,
+              avatar: true,
+            },
           },
-        },
-        replyTo: {
-          select: {
-            id: true,
-            content: true,
-            type: true,
-            mediaUrl: true,
-            sender: {
-              select: {
-                id: true,
-                name: true,
-                lineId: true,
+          replyTo: {
+            select: {
+              id: true,
+              content: true,
+              type: true,
+              mediaUrl: true,
+              sender: {
+                select: {
+                  id: true,
+                  name: true,
+                  lineId: true,
+                },
               },
             },
           },
         },
-      },
-      orderBy: { createdAt: "asc" },
-    });
-
-    // Also fetch the conversation participants to check read receipt status
-    const conversation = await prisma.conversation.findUnique({
-      where: { id: conversationId },
-      include: {
-        participants: {
-          include: {
-            user: {
-              select: {
-                id: true,
-                lineId: true,
-                name: true,
-                avatar: true,
-                statusMessage: true,
+        orderBy: { createdAt: "asc" },
+      }),
+      prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: {
+          participants: {
+            include: {
+              user: {
+                select: {
+                  id: true,
+                  lineId: true,
+                  name: true,
+                  avatar: true,
+                  statusMessage: true,
+                },
               },
             },
           },
         },
-      },
-    });
+      }),
+    ]);
+
+    // Update lastReadAt asynchronously in background without blocking response
+    prisma.conversationParticipant
+      .update({
+        where: {
+          conversationId_userId: {
+            conversationId,
+            userId: session.userId,
+          },
+        },
+        data: { lastReadAt: new Date() },
+      })
+      .catch(() => {});
 
     return NextResponse.json({
       messages,
@@ -120,7 +104,7 @@ export async function POST(
 
     const { id: conversationId } = await params;
     const body = await req.json();
-    const { content, type = "TEXT", mediaUrl, replyToId } = body;
+    const { content, type = "TEXT", mediaUrl, replyToId, id: customId } = body;
 
     if (!content && !mediaUrl) {
       return NextResponse.json(
@@ -129,66 +113,52 @@ export async function POST(
       );
     }
 
-    // Ensure user belongs to conversation
-    const isMember = await prisma.conversationParticipant.findUnique({
-      where: {
-        conversationId_userId: {
-          conversationId,
-          userId: session.userId,
-        },
+    // Direct single fast insert
+    const newMessage = await prisma.message.create({
+      data: {
+        ...(customId ? { id: customId } : {}),
+        conversationId,
+        senderId: session.userId,
+        content:
+          content ||
+          (type === "STICKER"
+            ? "[Sticker]"
+            : type === "AUDIO"
+            ? "[Voice Message]"
+            : "[Image]"),
+        type: type as "TEXT" | "STICKER" | "IMAGE" | "AUDIO",
+        mediaUrl: mediaUrl || null,
+        replyToId: replyToId || null,
       },
-    });
-
-    if (!isMember) {
-      return NextResponse.json(
-        { error: "You are not a participant in this chat." },
-        { status: 403 }
-      );
-    }
-
-    // Create message & update conversation updatedAt + participant lastReadAt
-    const [newMessage] = await prisma.$transaction([
-      prisma.message.create({
-        data: {
-          conversationId,
-          senderId: session.userId,
-          content:
-            content ||
-            (type === "STICKER"
-              ? "[Sticker]"
-              : type === "AUDIO"
-              ? "[Voice Message]"
-              : "[Image]"),
-          type: type as "TEXT" | "STICKER" | "IMAGE" | "AUDIO",
-          mediaUrl: mediaUrl || null,
-          replyToId: replyToId || null,
-        },
-        include: {
-          sender: {
-            select: {
-              id: true,
-              lineId: true,
-              name: true,
-              avatar: true,
-            },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            lineId: true,
+            name: true,
+            avatar: true,
           },
-          replyTo: {
-            select: {
-              id: true,
-              content: true,
-              type: true,
-              mediaUrl: true,
-              sender: {
-                select: {
-                  id: true,
-                  name: true,
-                  lineId: true,
-                },
+        },
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            mediaUrl: true,
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                lineId: true,
               },
             },
           },
         },
-      }),
+      },
+    });
+
+    // Touch conversation & participant in background without blocking API response
+    Promise.all([
       prisma.conversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date() },
@@ -202,7 +172,7 @@ export async function POST(
         },
         data: { lastReadAt: new Date() },
       }),
-    ]);
+    ]).catch(() => {});
 
     return NextResponse.json({
       success: true,
