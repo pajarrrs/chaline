@@ -152,12 +152,12 @@ export async function showBrowserNotification(
 
   if (Notification.permission !== "granted") return;
 
-  const notifOptions: NotificationOptions = {
+  const notifOptions: any = {
     body: options?.body || "New message received",
     icon: options?.icon || "/icons/icon-192x192.png",
     badge: "/icons/icon-192x192.png",
     tag: options?.tag || `chaline-${Date.now()}`,
-    vibrate: [200, 100, 200] as any,
+    vibrate: [200, 100, 200],
   };
 
   // 1. Android Mobile Chrome & PWA: Requires ServiceWorkerRegistration.showNotification()!
