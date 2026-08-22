@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:./dev.db"
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 model User {
@@ -13,7 +14,7 @@ model User {
   name          String
   password      String
   avatar        String?        @default("https://api.dicebear.com/7.x/bottts/svg?seed=LineUser")
-  statusMessage String?        @default("Available on LINE")
+  statusMessage String?        @default("Available on Chaline")
   createdAt     DateTime       @default(now())
 
   // Relationships
