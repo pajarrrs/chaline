@@ -175,6 +175,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     onlineUserIds,
     typingUsers,
     sendTypingStatus,
+    readReceipts,
   } = useChat();
 
   const [inputContent, setInputContent] = useState("");
@@ -544,10 +545,14 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         ) : (
           messages.map((msg: Message) => {
             const isMe = msg.senderId === user?.id;
+            const dynamicOtherLastRead = Math.max(
+              otherLastRead,
+              activeConversation ? readReceipts[activeConversation.id] || 0 : 0
+            );
             const isRead =
               isMe &&
-              otherLastRead > 0 &&
-              new Date(msg.createdAt).getTime() <= otherLastRead;
+              dynamicOtherLastRead > 0 &&
+              new Date(msg.createdAt).getTime() <= dynamicOtherLastRead;
 
             return (
               <div

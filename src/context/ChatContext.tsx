@@ -37,10 +37,12 @@ interface ChatContextType {
   refreshFriends: () => Promise<void>;
   addFriendByLineId: (lineId: string) => Promise<{ success: boolean; message?: string; friend?: User }>;
   enableNotifications: () => Promise<boolean>;
-  // Realtime Presence & Typing
+  // Realtime Presence, Typing & Read Receipts
   onlineUserIds: string[];
   typingUsers: Record<string, boolean>; // convId -> isTyping
   sendTypingStatus: (isTyping: boolean) => void;
+  readReceipts: Record<string, number>; // convId -> timestamp of other user's read
+  broadcastReadStatus: (convId: string) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -57,9 +59,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<User | null>(null);
 
-  // Presence & Typing states
+  // Presence, Typing, Read Receipts
   const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
+  const [readReceipts, setReadReceipts] = useState<Record<string, number>>({});
 
   const activeConvIdRef = useRef<string | null>(null);
   const isStartingChatLockRef = useRef<boolean>(false);
@@ -87,7 +90,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     return await requestNotificationPermission();
   };
 
-  // Send Typing Broadcast over WebSocket
+  // Broadcast typing status over WebSocket
   const sendTypingStatus = useCallback(
     (isTyping: boolean) => {
       if (!channelRef.current || !activeConvIdRef.current || !user) return;
@@ -99,6 +102,25 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           conversationId: activeConvIdRef.current,
           userId: user.id,
           isTyping,
+        },
+      });
+    },
+    [user]
+  );
+
+  // Broadcast read status over WebSocket (Instant 0 ms read receipt!)
+  const broadcastReadStatus = useCallback(
+    (convId: string) => {
+      if (!channelRef.current || !convId || !user) return;
+
+      const now = Date.now();
+      channelRef.current.send({
+        type: "broadcast",
+        event: "messages_read",
+        payload: {
+          conversationId: convId,
+          userId: user.id,
+          readAt: now,
         },
       });
     },
@@ -143,8 +165,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch Messages for active conversation (Initial room click)
-  const fetchActiveMessages = useCallback(async (convId: string, showLoader = true) => {
+  // Fetch Messages for active conversation
+  const fetchActiveMessages = useCallback(async (convId: string, showLoader = false) => {
     if (showLoader) setLoadingMessages(true);
     try {
       const res = await fetch(`/api/conversations/${convId}/messages`);
@@ -160,6 +182,18 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           const stillPending = pending.filter((p) => !serverIds.has(p.id));
           return [...newMessages, ...stillPending];
         });
+
+        // Initialize read receipt from participants if available
+        if (data.participants && Array.isArray(data.participants)) {
+          const other = data.participants.find((p: any) => p.userId !== currentUserIdRef.current);
+          if (other?.lastReadAt) {
+            const lastReadMs = new Date(other.lastReadAt).getTime();
+            setReadReceipts((prev) => ({
+              ...prev,
+              [convId]: Math.max(prev[convId] || 0, lastReadMs),
+            }));
+          }
+        }
       }
     } catch (e) {
       console.error("Error fetching messages:", e);
@@ -187,6 +221,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           if (prev.some((m) => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
+
+        // If I am currently viewing this room, broadcast read receipt back to sender instantly!
+        broadcastReadStatus(newMsg.conversationId);
       }
 
       // 4. Play sound & browser notification for incoming message
@@ -231,10 +268,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           );
       });
     },
-    [user, refreshConversations]
+    [user, refreshConversations, broadcastReadStatus]
   );
 
-  // Pure Supabase WebSocket Setup (Presence + Broadcast + Zero Polling)
+  // Pure Supabase WebSocket Setup (Presence + Broadcast + Read Receipts)
   useEffect(() => {
     if (!user) return;
     refreshConversations();
@@ -248,14 +285,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         },
       });
 
-      // Listen for message broadcasts
+      // 1. Message broadcasts
       channel.on("broadcast", { event: "new_message" }, (payload) => {
         if (payload?.payload?.message) {
           handleRealtimeIncomingMessage(payload.payload.message);
         }
       });
 
-      // Listen for typing indicator
+      // 2. Typing indicator broadcasts
       channel.on("broadcast", { event: "user_typing" }, (payload) => {
         const { conversationId, userId, isTyping } = payload?.payload || {};
         if (userId && userId !== user.id && conversationId) {
@@ -264,7 +301,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             [conversationId]: isTyping,
           }));
 
-          // Auto-clear typing after 4 seconds if no stop signal
           if (isTyping) {
             if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
             typingTimeoutRef.current = setTimeout(() => {
@@ -277,7 +313,31 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         }
       });
 
-      // Listen for Presence (Online / Offline status)
+      // 3. Realtime Read Receipts broadcast (Instant "Read" label)
+      channel.on("broadcast", { event: "messages_read" }, (payload) => {
+        const { conversationId, userId, readAt } = payload?.payload || {};
+        if (userId && userId !== user.id && conversationId && readAt) {
+          setReadReceipts((prev) => ({
+            ...prev,
+            [conversationId]: Math.max(prev[conversationId] || 0, readAt),
+          }));
+
+          // Also update active conversation participant lastReadAt in state
+          setActiveConversation((prev) => {
+            if (!prev || prev.id !== conversationId) return prev;
+            return {
+              ...prev,
+              participants: prev.participants.map((p) =>
+                p.userId === userId
+                  ? { ...p, lastReadAt: new Date(readAt).toISOString() }
+                  : p
+              ),
+            };
+          });
+        }
+      });
+
+      // 4. Online Presence (Online / Offline status)
       channel.on("presence", { event: "sync" }, () => {
         const state = channel.presenceState();
         const activeIds = Object.keys(state);
@@ -332,7 +392,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     // Fetch initial chat history ONCE
-    fetchActiveMessages(conv.id, true);
+    fetchActiveMessages(conv.id, false);
+
+    // Broadcast that I have read this conversation
+    broadcastReadStatus(conv.id);
 
     // Mark as read in local state
     setConversations((prev) =>
@@ -510,6 +573,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         onlineUserIds,
         typingUsers,
         sendTypingStatus,
+        readReceipts,
+        broadcastReadStatus,
       }}
     >
       {children}
