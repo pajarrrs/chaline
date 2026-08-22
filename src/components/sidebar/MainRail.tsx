@@ -8,7 +8,6 @@ import {
   LogOut,
   Moon,
   Sun,
-  Sparkles,
   Bell,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
@@ -24,6 +23,7 @@ export function MainRail() {
     setProfileModalUser,
     conversations,
     activeConversation,
+    enableNotifications,
   } = useChat();
   const { resolvedTheme, setTheme } = useTheme();
 
@@ -99,6 +99,8 @@ export function MainRail() {
           </div>
         </div>
 
+        {/* Bottom Rail: Notifications, Theme toggle & Logout */}
+        <div className="flex flex-col items-center gap-3">
           {/* Notification Sound & Permission Button */}
           <button
             onClick={async () => {
@@ -128,6 +130,7 @@ export function MainRail() {
             )}
           </button>
 
+          {/* Logout */}
           <button
             onClick={logout}
             className="w-10 h-10 rounded-2xl text-neutral-400 hover:text-red-400 hover:bg-red-500/10 flex items-center justify-center transition-all"
@@ -181,6 +184,20 @@ export function MainRail() {
           >
             <UserPlus className="w-5 h-5" />
             <span className="text-[10px]">Add Friend</span>
+          </button>
+
+          {/* Sound Notification Button Mobile */}
+          <button
+            onClick={async () => {
+              const granted = await enableNotifications();
+              if (granted) {
+                alert("🔔 Notifications enabled!");
+              }
+            }}
+            className="flex flex-col items-center gap-1 py-1 px-3 rounded-xl text-neutral-500 dark:text-neutral-400 hover:text-[#06C755] transition-all"
+          >
+            <Bell className="w-5 h-5" />
+            <span className="text-[10px]">Alerts</span>
           </button>
 
           {/* Profile Button */}
