@@ -15,23 +15,8 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  // Initialize user instantly from localStorage cache on frame 0
-  const [user, setUser] = useState<User | null>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const cached = localStorage.getItem("chaline_user");
-        if (cached) return JSON.parse(cached);
-      } catch {}
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !localStorage.getItem("chaline_user");
-    }
-    return true;
-  });
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const router = useRouter();
   const pathname = usePathname();
@@ -65,7 +50,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Hydrate from localStorage on client mount, then refresh
   useEffect(() => {
+    try {
+      const cached = localStorage.getItem("chaline_user");
+      if (cached) {
+        setUser(JSON.parse(cached));
+        setLoading(false);
+      }
+    } catch {}
     refreshUser();
   }, []);
 
