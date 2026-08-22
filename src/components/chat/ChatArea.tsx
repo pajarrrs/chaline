@@ -899,16 +899,6 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               <ImageIcon className="w-5 h-5" />
             </button>
 
-            {/* Voice Note Button */}
-            <button
-              type="button"
-              onClick={startRecording}
-              className="p-2 rounded-xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors flex-shrink-0"
-              title="Record Voice Note"
-            >
-              <Mic className="w-5 h-5" />
-            </button>
-
             {/* Text Input Form */}
             <form onSubmit={handleSendText} className="flex-1 flex items-center gap-1.5 min-w-0">
               <input
@@ -918,14 +908,26 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                 onChange={(e) => setInputContent(e.target.value)}
                 className="flex-1 min-w-0 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
               />
-              <button
-                type="submit"
-                disabled={!inputContent.trim()}
-                className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all disabled:opacity-40 active:scale-95 flex-shrink-0"
-                title="Send"
-              >
-                <Send className="w-4 h-4" />
-              </button>
+
+              {/* Dynamic Action Button: Send if typing, Mic (VN) if empty */}
+              {inputContent.trim().length > 0 ? (
+                <button
+                  type="submit"
+                  className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all active:scale-95 flex-shrink-0 animate-in zoom-in-75 duration-150"
+                  title="Send Message"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startRecording}
+                  className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-all active:scale-95 flex-shrink-0 animate-in zoom-in-75 duration-150"
+                  title="Record Voice Note"
+                >
+                  <Mic className="w-5 h-5" />
+                </button>
+              )}
             </form>
           </>
         )}
