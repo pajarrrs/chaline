@@ -56,8 +56,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const prevUnreadCountRef = useRef<number>(0);
   const activeConvIdRef = useRef<string | null>(null);
   const isStartingChatLockRef = useRef<boolean>(false);
+  const sentMessageIdsRef = useRef<Set<string>>(new Set());
+  const currentUserIdRef = useRef<string | null>(null);
 
-  // Keep activeConvIdRef in sync
+  // Keep refs in sync
+  useEffect(() => {
+    currentUserIdRef.current = user?.id || null;
+  }, [user]);
+
   useEffect(() => {
     activeConvIdRef.current = activeConversation?.id || null;
   }, [activeConversation]);
@@ -69,7 +75,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const enableNotifications = async () => {
     initNotificationSound();
-    playNotificationSound();
     return await requestNotificationPermission();
   };
 
@@ -90,9 +95,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         );
 
         if (currentTotalUnread > prevUnreadCountRef.current) {
-          playNotificationSound();
-          const unreadChat = newConversations.find((c) => (c.unreadCount || 0) > 0);
+          const unreadChat = newConversations.find(
+            (c) =>
+              (c.unreadCount || 0) > 0 &&
+              c.lastMessage &&
+              c.lastMessage.senderId !== currentUserIdRef.current &&
+              !sentMessageIdsRef.current.has(c.lastMessage.id)
+          );
+
           if (unreadChat && unreadChat.lastMessage) {
+            playNotificationSound();
             const sender = unreadChat.lastMessage.sender;
             showBrowserNotification(`Chaline • ${sender.name}`, {
               body:
@@ -100,6 +112,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                   ? "✨ Sent a sticker"
                   : unreadChat.lastMessage.type === "IMAGE"
                   ? "📷 Sent a photo"
+                  : unreadChat.lastMessage.type === "AUDIO"
+                  ? "🎤 Sent a voice note"
                   : unreadChat.lastMessage.content,
               icon: sender.avatar || "/icons/icon-192x192.png",
             });
@@ -136,13 +150,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const newMessages: Message[] = data.messages || [];
         setMessages(newMessages);
 
-        // Check if a new message from other user arrived
+        // Check if a new incoming message from OTHER user arrived
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
+          const isFromOther =
+            lastMsg.senderId !== currentUserIdRef.current &&
+            !sentMessageIdsRef.current.has(lastMsg.id);
+
           if (
             prevLastMessageIdRef.current &&
             lastMsg.id !== prevLastMessageIdRef.current &&
-            lastMsg.senderId !== user?.id
+            isFromOther
           ) {
             playNotificationSound();
             showBrowserNotification(`Chaline • ${lastMsg.sender.name}`, {
@@ -151,6 +169,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
                   ? "✨ Sent a sticker"
                   : lastMsg.type === "IMAGE"
                   ? "📷 Sent a photo"
+                  : lastMsg.type === "AUDIO"
+                  ? "🎤 Sent a voice note"
                   : lastMsg.content,
               icon: lastMsg.sender.avatar || "/icons/icon-192x192.png",
             });
@@ -163,7 +183,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     } finally {
       if (showLoader) setLoadingMessages(false);
     }
-  }, [user?.id]);
+  }, []);
 
   // Fast Real-time Polling every 1.2 seconds + Focus listener
   useEffect(() => {
@@ -272,6 +292,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         },
       };
 
+      sentMessageIdsRef.current.add(tempMessage.id);
       setMessages((prev) => [...prev, tempMessage]);
       prevLastMessageIdRef.current = tempMessage.id;
 
@@ -291,6 +312,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       if (res.ok) {
         const data = await res.json();
+        sentMessageIdsRef.current.add(data.message.id);
         setMessages((prev) =>
           prev.map((m) => (m.id === tempMessage.id ? data.message : m))
         );
