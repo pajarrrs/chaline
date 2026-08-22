@@ -59,6 +59,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const isStartingChatLockRef = useRef<boolean>(false);
   const sentMessageIdsRef = useRef<Set<string>>(new Set());
   const currentUserIdRef = useRef<string | null>(null);
+  const channelRef = useRef<any>(null);
 
   // Keep refs in sync
   useEffect(() => {
@@ -99,7 +100,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        // Check if unread count increased from background chat
+        // Background unread count tracker (Only if sender is NOT me)
         const currentTotalUnread = newConversations.reduce(
           (acc, curr) => acc + (curr.unreadCount || 0),
           0
@@ -110,6 +111,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             (c) =>
               (c.unreadCount || 0) > 0 &&
               c.lastMessage &&
+              user &&
+              c.lastMessage.senderId !== user.id &&
               c.lastMessage.senderId !== currentUserIdRef.current &&
               !sentMessageIdsRef.current.has(c.lastMessage.id)
           );
@@ -161,10 +164,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const newMessages: Message[] = data.messages || [];
         setMessages(newMessages);
 
-        // Check if a new incoming message from OTHER user arrived
         if (newMessages.length > 0) {
           const lastMsg = newMessages[newMessages.length - 1];
           const isFromOther =
+            user &&
+            lastMsg.senderId !== user.id &&
             lastMsg.senderId !== currentUserIdRef.current &&
             !sentMessageIdsRef.current.has(lastMsg.id);
 
@@ -194,7 +198,45 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     } finally {
       if (showLoader) setLoadingMessages(false);
     }
-  }, []);
+  }, [user]);
+
+  // Handle incoming message from Realtime WebSocket (Instant 0 ms!)
+  const handleRealtimeIncomingMessage = useCallback(
+    (newMsg: Message) => {
+      if (!newMsg) return;
+
+      // 1. If message was sent by ME, strictly ignore!
+      const myId = user?.id || currentUserIdRef.current;
+      if (myId && newMsg.senderId === myId) return;
+      if (sentMessageIdsRef.current.has(newMsg.id)) return;
+
+      // 2. If active conversation matches, append immediately
+      if (activeConvIdRef.current === newMsg.conversationId) {
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === newMsg.id)) return prev;
+          return [...prev, newMsg];
+        });
+        prevLastMessageIdRef.current = newMsg.id;
+      }
+
+      // 3. Play sound & notification for incoming message
+      playNotificationSound();
+      showBrowserNotification(`Chaline • ${newMsg.sender?.name || "Friend"}`, {
+        body:
+          newMsg.type === "STICKER"
+            ? "✨ Sent a sticker"
+            : newMsg.type === "IMAGE"
+            ? "📷 Sent a photo"
+            : newMsg.type === "AUDIO"
+            ? "🎤 Sent a voice note"
+            : newMsg.content,
+        icon: newMsg.sender?.avatar || "/icons/icon-192x192.png",
+      });
+
+      refreshConversations();
+    },
+    [user, refreshConversations]
+  );
 
   // Supabase Realtime WebSockets Listener
   useEffect(() => {
@@ -202,67 +244,42 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     refreshConversations();
     refreshFriends();
 
-    if (!supabase) {
-      // Fallback polling if Supabase env is not configured yet
-      const interval = setInterval(() => {
-        refreshConversations();
-        if (activeConvIdRef.current) {
-          fetchActiveMessages(activeConvIdRef.current, false);
-        }
-      }, 1500);
-      return () => clearInterval(interval);
+    if (supabase) {
+      // Connect to global chat realtime channel
+      const channel = supabase
+        .channel("chaline-realtime-global")
+        .on("broadcast", { event: "new_message" }, (payload) => {
+          if (payload?.payload?.message) {
+            handleRealtimeIncomingMessage(payload.payload.message);
+          }
+        })
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "Message",
+          },
+          (payload) => {
+            const newMsg = payload.new as any;
+            if (newMsg && activeConvIdRef.current === newMsg.conversationId) {
+              fetchActiveMessages(newMsg.conversationId, false);
+            }
+            refreshConversations();
+          }
+        )
+        .subscribe();
+
+      channelRef.current = channel;
     }
 
-    // Realtime Channel for instant 0ms WebSockets
-    const channel = supabase
-      .channel("chaline-realtime-messages")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "Message",
-        },
-        (payload) => {
-          const newMsg = payload.new as any;
-          if (!newMsg) return;
-
-          // If viewing this conversation, instantly reload messages
-          if (activeConvIdRef.current === newMsg.conversationId) {
-            fetchActiveMessages(newMsg.conversationId, false);
-          }
-
-          // Trigger sound if from another user and not sent by me
-          if (
-            newMsg.senderId !== currentUserIdRef.current &&
-            !sentMessageIdsRef.current.has(newMsg.id)
-          ) {
-            playNotificationSound();
-          }
-
-          refreshConversations();
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "Conversation",
-        },
-        () => {
-          refreshConversations();
-        }
-      )
-      .subscribe();
-
-    // Gentle fallback sync every 5 seconds + on window focus
-    const fallbackInterval = setInterval(() => {
+    // Gentle polling sync every 2 seconds + focus listener
+    const pollInterval = setInterval(() => {
       refreshConversations();
       if (activeConvIdRef.current) {
         fetchActiveMessages(activeConvIdRef.current, false);
       }
-    }, 5000);
+    }, 2000);
 
     const handleFocus = () => {
       if (document.visibilityState === "visible") {
@@ -277,12 +294,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     document.addEventListener("visibilitychange", handleFocus);
 
     return () => {
-      supabase?.removeChannel(channel);
-      clearInterval(fallbackInterval);
+      if (channelRef.current && supabase) {
+        supabase.removeChannel(channelRef.current);
+      }
+      clearInterval(pollInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
-  }, [user, refreshConversations, refreshFriends, fetchActiveMessages]);
+  }, [user, refreshConversations, refreshFriends, fetchActiveMessages, handleRealtimeIncomingMessage]);
 
   const selectConversation = (conv: Conversation | null) => {
     setActiveConversation(conv);
@@ -335,9 +354,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     if (!activeConversation || (!content.trim() && !mediaUrl)) return;
 
     try {
+      const tempId = `temp_${Date.now()}`;
+      sentMessageIdsRef.current.add(tempId);
+
       // Optimistic message UI
       const tempMessage: Message = {
-        id: `temp_${Date.now()}`,
+        id: tempId,
         conversationId: activeConversation.id,
         senderId: user!.id,
         content:
@@ -360,9 +382,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         },
       };
 
-      sentMessageIdsRef.current.add(tempMessage.id);
       setMessages((prev) => [...prev, tempMessage]);
-      prevLastMessageIdRef.current = tempMessage.id;
+      prevLastMessageIdRef.current = tempId;
 
       const res = await fetch(
         `/api/conversations/${activeConversation.id}/messages`,
@@ -380,11 +401,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       if (res.ok) {
         const data = await res.json();
-        sentMessageIdsRef.current.add(data.message.id);
+        const serverMessage = data.message;
+        sentMessageIdsRef.current.add(serverMessage.id);
+
         setMessages((prev) =>
-          prev.map((m) => (m.id === tempMessage.id ? data.message : m))
+          prev.map((m) => (m.id === tempId ? serverMessage : m))
         );
-        prevLastMessageIdRef.current = data.message.id;
+        prevLastMessageIdRef.current = serverMessage.id;
+
+        // Broadcast to WebSocket subscribers for instant 0 ms delivery
+        if (channelRef.current) {
+          channelRef.current.send({
+            type: "broadcast",
+            event: "new_message",
+            payload: { message: serverMessage },
+          });
+        }
+
         refreshConversations();
       }
     } catch (e) {
