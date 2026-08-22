@@ -88,6 +88,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const newConversations: Conversation[] = data.conversations || [];
         setConversations(newConversations);
 
+        // Keep activeConversation in sync if open
+        if (activeConvIdRef.current) {
+          const matched = newConversations.find(
+            (c) => c.id === activeConvIdRef.current
+          );
+          if (matched) {
+            setActiveConversation((prev) => (prev ? { ...prev, ...matched } : matched));
+          }
+        }
+
         // Check if unread count increased from background chat
         const currentTotalUnread = newConversations.reduce(
           (acc, curr) => acc + (curr.unreadCount || 0),

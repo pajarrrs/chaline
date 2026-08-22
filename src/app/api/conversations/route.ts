@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
       );
       if (otherParticipant) {
         if (seenOtherUserIds.has(otherParticipant.userId)) {
-          continue; // Skip duplicate room
+          continue; // Skip duplicate older room
         }
         seenOtherUserIds.add(otherParticipant.userId);
       }
@@ -101,7 +101,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: Create or retrieve conversation between current user and target user (strict 1-on-1 deduplication)
+// POST: Create or retrieve conversation between current user and target user
 export async function POST(req: NextRequest) {
   try {
     const session = await getSessionUser();
@@ -153,7 +153,17 @@ export async function POST(req: NextRequest) {
     });
 
     if (existing) {
-      return NextResponse.json({ conversation: existing });
+      // Touch updatedAt to keep it at top
+      await prisma.conversation.update({
+        where: { id: existing.id },
+        data: { updatedAt: new Date() },
+      });
+      return NextResponse.json({
+        conversation: {
+          ...existing,
+          updatedAt: new Date().toISOString(),
+        },
+      });
     }
 
     // Create new conversation
