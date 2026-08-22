@@ -14,6 +14,14 @@ import {
   Upload,
   Link as LinkIcon,
   X,
+  Reply,
+  Mic,
+  Square,
+  Trash2,
+  Play,
+  Pause,
+  Download,
+  ZoomIn,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
@@ -22,6 +30,123 @@ import { Message } from "@/types/line";
 
 interface ChatAreaProps {
   onBackMobile?: () => void;
+}
+
+// Custom Voice Note Player Component
+function VoiceNotePlayer({
+  audioUrl,
+  isMe,
+}: {
+  audioUrl: string;
+  isMe: boolean;
+}) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = new Audio(audioUrl);
+    audioRef.current = audio;
+
+    const onLoadedMetadata = () => {
+      if (audio.duration && !isNaN(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    const onTimeUpdate = () => {
+      if (audio.duration) {
+        setCurrentTime(audio.currentTime);
+        setProgress((audio.currentTime / audio.duration) * 100);
+      }
+    };
+
+    const onEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+      setCurrentTime(0);
+    };
+
+    audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    audio.addEventListener("timeupdate", onTimeUpdate);
+    audio.addEventListener("ended", onEnded);
+
+    return () => {
+      audio.pause();
+      audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("timeupdate", onTimeUpdate);
+      audio.removeEventListener("ended", onEnded);
+    };
+  }, [audioUrl]);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (isPlaying) {
+      audioRef.current.pause();
+      setIsPlaying(false);
+    } else {
+      audioRef.current.play().then(() => setIsPlaying(true)).catch(console.warn);
+    }
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!audioRef.current || !duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pos = (e.clientX - rect.left) / rect.width;
+    const newTime = pos * duration;
+    audioRef.current.currentTime = newTime;
+    setCurrentTime(newTime);
+    setProgress(pos * 100);
+  };
+
+  const formatTime = (sec: number) => {
+    if (!sec || isNaN(sec)) return "0:00";
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
+  };
+
+  return (
+    <div className="flex items-center gap-3 py-1 min-w-[200px] max-w-[260px]">
+      <button
+        type="button"
+        onClick={togglePlay}
+        className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-all active:scale-95 flex-shrink-0 ${
+          isMe
+            ? "bg-white text-[#058639]"
+            : "bg-[#06C755] text-white"
+        }`}
+      >
+        {isPlaying ? (
+          <Pause className="w-4 h-4 fill-current" />
+        ) : (
+          <Play className="w-4 h-4 fill-current ml-0.5" />
+        )}
+      </button>
+
+      <div className="flex-1 flex flex-col gap-1.5">
+        {/* Waveform / Progress bar */}
+        <div
+          onClick={handleSeek}
+          className="h-2 rounded-full bg-black/15 dark:bg-white/20 relative cursor-pointer overflow-hidden"
+        >
+          <div
+            className={`h-full rounded-full transition-all ${
+              isMe ? "bg-white dark:bg-white" : "bg-[#06C755]"
+            }`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between text-[10px] opacity-85 font-mono">
+          <span>{formatTime(currentTime)}</span>
+          <span>{formatTime(duration || 0)}</span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ChatArea({ onBackMobile }: ChatAreaProps) {
@@ -42,6 +167,19 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
   const [urlInputMode, setUrlInputMode] = useState(false);
   const [customUrl, setCustomUrl] = useState("");
 
+  // Reply state
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+
+  // Image Zoom Lightbox
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+
+  // Voice Note Recording State
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -59,12 +197,31 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     e.preventDefault();
     if (!inputContent.trim()) return;
     const text = inputContent;
+    const currentReply = replyingTo;
     setInputContent("");
-    await sendMessage(text, "TEXT");
+    setReplyingTo(null);
+
+    const replyPreview = currentReply
+      ? {
+          id: currentReply.id,
+          content: currentReply.content,
+          type: currentReply.type,
+          mediaUrl: currentReply.mediaUrl,
+          sender: {
+            id: currentReply.sender.id,
+            name: currentReply.sender.name,
+            lineId: currentReply.sender.lineId,
+          },
+        }
+      : undefined;
+
+    await sendMessage(text, "TEXT", undefined, currentReply?.id, replyPreview);
   };
 
   const handleSelectSticker = async (stickerUrl: string) => {
-    await sendMessage("", "STICKER", stickerUrl);
+    const currentReply = replyingTo;
+    setReplyingTo(null);
+    await sendMessage("", "STICKER", stickerUrl, currentReply?.id);
   };
 
   // Handle local file selection
@@ -85,7 +242,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
       }
     };
     reader.readAsDataURL(file);
-    e.target.value = ""; // Reset input
+    e.target.value = "";
   };
 
   // Handle Clipboard Paste (Ctrl+V with image)
@@ -114,18 +271,95 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     if (!finalUrl) return;
 
     const caption = imageCaption.trim();
+    const currentReply = replyingTo;
+
     setShowImageModal(false);
     setImagePreviewUrl("");
     setImageCaption("");
     setCustomUrl("");
     setUrlInputMode(false);
+    setReplyingTo(null);
 
-    await sendMessage(caption, "IMAGE", finalUrl);
+    await sendMessage(caption, "IMAGE", finalUrl, currentReply?.id);
+  };
+
+  // Voice Note Recording
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          audioChunksRef.current.push(e.data);
+        }
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      mediaRecorder.start(100);
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Microphone access error:", err);
+      alert("Microphone permission required to send voice notes.");
+    }
+  };
+
+  const stopAndSendRecording = async () => {
+    if (!mediaRecorderRef.current || !isRecording) return;
+
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    setIsRecording(false);
+
+    mediaRecorderRef.current.onstop = async () => {
+      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Audio = reader.result as string;
+        if (base64Audio) {
+          const currentReply = replyingTo;
+          setReplyingTo(null);
+          await sendMessage("", "AUDIO", base64Audio, currentReply?.id);
+        }
+      };
+      reader.readAsDataURL(audioBlob);
+    };
+
+    mediaRecorderRef.current.stop();
+  };
+
+  const cancelRecording = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+    }
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+    }
+    setIsRecording(false);
+    setRecordingDuration(0);
+    audioChunksRef.current = [];
   };
 
   const formatMessageTime = (dateStr: string) => {
     const d = new Date(dateStr);
     return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const formatRecordingTime = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s < 10 ? "0" : ""}${s}`;
   };
 
   // If no chat selected
@@ -244,7 +478,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               Chat started with {otherUser.name}
             </p>
             <p className="text-[11px] max-w-xs text-neutral-600 dark:text-neutral-400">
-              Say hello, send a photo from your device, or send a cute Chaline sticker!
+              Say hello, send a photo, voice note, or send a cute Chaline sticker!
             </p>
           </div>
         ) : (
@@ -258,7 +492,8 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             return (
               <div
                 key={msg.id}
-                className={`flex items-end gap-2 ${
+                id={`msg-${msg.id}`}
+                className={`flex items-end gap-2 group/msg ${
                   isMe ? "justify-end" : "justify-start"
                 }`}
               >
@@ -277,6 +512,18 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                   </div>
                 )}
 
+                {/* Quick Reply Button on hover / tap */}
+                {isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyingTo(msg)}
+                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center"
+                    title="Reply"
+                  >
+                    <Reply className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
                 {/* Read status + Timestamp for ME */}
                 {isMe && (
                   <div className="flex flex-col items-end text-[10px] text-neutral-600 dark:text-neutral-400 font-mono leading-tight mb-1 select-none">
@@ -290,7 +537,31 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                 )}
 
                 {/* Bubble / Media Content */}
-                <div className="max-w-[75%] sm:max-w-[65%] flex flex-col gap-1">
+                <div className="max-w-[80%] sm:max-w-[65%] flex flex-col gap-1">
+                  {/* Quoted / Reply Preview Block */}
+                  {msg.replyTo && (
+                    <div
+                      className={`text-[11px] p-2.5 rounded-xl border-l-4 border-[#06C755] bg-black/10 dark:bg-white/10 backdrop-blur-sm flex flex-col gap-0.5 cursor-pointer hover:opacity-90 transition-opacity`}
+                      onClick={() => {
+                        const el = document.getElementById(`msg-${msg.replyTo?.id}`);
+                        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }}
+                    >
+                      <span className="font-bold text-[#06C755] truncate">
+                        {msg.replyTo.sender?.name || "Replied Message"}
+                      </span>
+                      <span className="text-neutral-700 dark:text-neutral-300 truncate">
+                        {msg.replyTo.type === "STICKER"
+                          ? "✨ [Sticker]"
+                          : msg.replyTo.type === "IMAGE"
+                          ? "📷 [Photo]"
+                          : msg.replyTo.type === "AUDIO"
+                          ? "🎤 [Voice Note]"
+                          : msg.replyTo.content}
+                      </span>
+                    </div>
+                  )}
+
                   {msg.type === "STICKER" && msg.mediaUrl ? (
                     <div className="p-1 hover:scale-105 transition-transform duration-200">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -302,13 +573,19 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                     </div>
                   ) : msg.type === "IMAGE" && msg.mediaUrl ? (
                     <div className="flex flex-col gap-1">
-                      <div className="rounded-2xl overflow-hidden shadow-md border border-black/[0.06] dark:border-white/[0.08] bg-black/5">
+                      <div
+                        onClick={() => setZoomedImage(msg.mediaUrl || null)}
+                        className="rounded-2xl overflow-hidden shadow-md border border-black/[0.06] dark:border-white/[0.08] bg-black/5 cursor-pointer group/img relative"
+                      >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={msg.mediaUrl}
                           alt="Shared media"
-                          className="max-h-72 max-w-full rounded-2xl object-cover"
+                          className="max-h-72 max-w-full rounded-2xl object-cover group-hover/img:scale-105 transition-transform duration-200"
                         />
+                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white">
+                          <ZoomIn className="w-6 h-6 drop-shadow-md" />
+                        </div>
                       </div>
                       {msg.content && msg.content !== "[Image]" && (
                         <div
@@ -320,6 +597,14 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                         </div>
                       )}
                     </div>
+                  ) : msg.type === "AUDIO" && msg.mediaUrl ? (
+                    <div
+                      className={`px-3.5 py-2.5 shadow-sm text-xs leading-relaxed ${
+                        isMe ? "line-bubble-me" : "line-bubble-other"
+                      }`}
+                    >
+                      <VoiceNotePlayer audioUrl={msg.mediaUrl} isMe={isMe} />
+                    </div>
                   ) : (
                     <div
                       className={`px-4 py-2.5 shadow-sm text-xs leading-relaxed break-words ${
@@ -330,6 +615,18 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                     </div>
                   )}
                 </div>
+
+                {/* Quick Reply Button on hover / tap for OTHER */}
+                {!isMe && (
+                  <button
+                    type="button"
+                    onClick={() => setReplyingTo(msg)}
+                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center"
+                    title="Reply"
+                  >
+                    <Reply className="w-3.5 h-3.5" />
+                  </button>
+                )}
 
                 {/* Timestamp for OTHER */}
                 {!isMe && (
@@ -344,7 +641,43 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* 3. Image Upload & Preview Modal */}
+      {/* 3. Fullscreen Image Zoom Lightbox Modal */}
+      {zoomedImage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md animate-in fade-in duration-150">
+          <div className="absolute top-4 right-4 flex items-center gap-3 z-50">
+            <a
+              href={zoomedImage}
+              download="chaline-photo.png"
+              target="_blank"
+              rel="noreferrer"
+              className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+              title="Download Photo"
+            >
+              <Download className="w-5 h-5" />
+            </a>
+            <button
+              onClick={() => setZoomedImage(null)}
+              className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+              title="Close"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div
+            onClick={() => setZoomedImage(null)}
+            className="w-full h-full flex items-center justify-center cursor-zoom-out"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={zoomedImage}
+              alt="Zoomed"
+              className="max-w-[95vw] max-h-[90vh] object-contain rounded-2xl shadow-2xl animate-in zoom-in-95 duration-150"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 4. Image Upload & Preview Modal */}
       {showImageModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150">
           <div className="relative w-full max-w-md bg-white dark:bg-[#1C1E28] rounded-3xl p-5 shadow-2xl border border-black/[0.08] dark:border-white/[0.1] flex flex-col gap-4 animate-in zoom-in-95 duration-150">
@@ -469,60 +802,134 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         </div>
       )}
 
-      {/* 4. Sticker Picker */}
+      {/* 5. Sticker Picker */}
       <StickerPicker
         isOpen={isStickerOpen}
         onClose={() => setIsStickerOpen(false)}
         onSelectSticker={handleSelectSticker}
       />
 
-      {/* 5. Input Bar */}
-      <div className="p-3 sm:p-4 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-2 z-20 flex-shrink-0">
-        {/* Sticker button */}
-        <button
-          type="button"
-          onClick={() => setIsStickerOpen((prev) => !prev)}
-          className={`p-2.5 rounded-2xl transition-colors ${
-            isStickerOpen
-              ? "bg-[#06C755] text-white"
-              : "text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06]"
-          }`}
-          title="Stickers"
-        >
-          <Smile className="w-5 h-5" />
-        </button>
-
-        {/* Image Attachment / Upload button */}
-        <button
-          type="button"
-          onClick={() => {
-            setIsStickerOpen(false);
-            fileInputRef.current?.click();
-          }}
-          className="p-2.5 rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors"
-          title="Send Photo from Device"
-        >
-          <ImageIcon className="w-5 h-5" />
-        </button>
-
-        {/* Text Input Form */}
-        <form onSubmit={handleSendText} className="flex-1 flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Type a message on Chaline (or paste image)..."
-            value={inputContent}
-            onChange={(e) => setInputContent(e.target.value)}
-            className="flex-1 px-4 py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
-          />
+      {/* 6. Quoted Reply Bar (Above Input) */}
+      {replyingTo && (
+        <div className="px-4 py-2 bg-neutral-100/95 dark:bg-[#1A1C25]/95 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 animate-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+            <div className="w-1 h-8 rounded-full bg-[#06C755] flex-shrink-0" />
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-[11px] font-bold text-[#06C755] truncate">
+                Replying to {replyingTo.sender.name}
+              </span>
+              <span className="text-[11px] text-neutral-600 dark:text-neutral-400 truncate">
+                {replyingTo.type === "STICKER"
+                  ? "✨ [Sticker]"
+                  : replyingTo.type === "IMAGE"
+                  ? "📷 [Photo]"
+                  : replyingTo.type === "AUDIO"
+                  ? "🎤 [Voice Note]"
+                  : replyingTo.content}
+              </span>
+            </div>
+          </div>
           <button
-            type="submit"
-            disabled={!inputContent.trim()}
-            className="p-2.5 rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all disabled:opacity-40 active:scale-95 flex-shrink-0"
-            title="Send"
+            onClick={() => setReplyingTo(null)}
+            className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
           >
-            <Send className="w-4 h-4" />
+            <X className="w-4 h-4" />
           </button>
-        </form>
+        </div>
+      )}
+
+      {/* 7. Input Bar / Voice Recording HUD */}
+      <div className="p-3 sm:p-4 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-2 z-20 flex-shrink-0">
+        {isRecording ? (
+          /* Live Voice Recording UI */
+          <div className="flex-1 flex items-center justify-between px-4 py-2 rounded-2xl bg-red-500/10 border border-red-500/20 animate-pulse">
+            <div className="flex items-center gap-3">
+              <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
+              <span className="text-xs font-mono font-bold text-red-600 dark:text-red-400">
+                Recording {formatRecordingTime(recordingDuration)}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={cancelRecording}
+                className="p-2 rounded-xl text-neutral-500 hover:text-red-500 hover:bg-neutral-200 dark:hover:bg-white/10 transition-colors"
+                title="Cancel Recording"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+              <button
+                type="button"
+                onClick={stopAndSendRecording}
+                className="px-4 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05B04B] text-white text-xs font-bold shadow-md shadow-[#06C755]/25 flex items-center gap-1.5 active:scale-95 transition-all"
+                title="Send Voice Note"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>Send VN</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* Standard Input Bar */
+          <>
+            {/* Sticker button */}
+            <button
+              type="button"
+              onClick={() => setIsStickerOpen((prev) => !prev)}
+              className={`p-2.5 rounded-2xl transition-colors ${
+                isStickerOpen
+                  ? "bg-[#06C755] text-white"
+                  : "text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06]"
+              }`}
+              title="Stickers"
+            >
+              <Smile className="w-5 h-5" />
+            </button>
+
+            {/* Image Attachment / Upload button */}
+            <button
+              type="button"
+              onClick={() => {
+                setIsStickerOpen(false);
+                fileInputRef.current?.click();
+              }}
+              className="p-2.5 rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors"
+              title="Send Photo from Device"
+            >
+              <ImageIcon className="w-5 h-5" />
+            </button>
+
+            {/* Voice Note Button */}
+            <button
+              type="button"
+              onClick={startRecording}
+              className="p-2.5 rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors"
+              title="Record Voice Note"
+            >
+              <Mic className="w-5 h-5" />
+            </button>
+
+            {/* Text Input Form */}
+            <form onSubmit={handleSendText} className="flex-1 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Type a message on Chaline (or paste image)..."
+                value={inputContent}
+                onChange={(e) => setInputContent(e.target.value)}
+                className="flex-1 px-4 py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
+              />
+              <button
+                type="submit"
+                disabled={!inputContent.trim()}
+                className="p-2.5 rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all disabled:opacity-40 active:scale-95 flex-shrink-0"
+                title="Send"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </div>
   );

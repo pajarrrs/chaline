@@ -25,7 +25,13 @@ interface ChatContextType {
   setProfileModalUser: (user: User | null) => void;
   selectConversation: (conv: Conversation | null) => void;
   startChatWithFriend: (friendUser: User) => Promise<void>;
-  sendMessage: (content: string, type?: "TEXT" | "STICKER" | "IMAGE", mediaUrl?: string) => Promise<void>;
+  sendMessage: (
+    content: string,
+    type?: "TEXT" | "STICKER" | "IMAGE" | "AUDIO",
+    mediaUrl?: string,
+    replyToId?: string,
+    replyToPreview?: Message["replyTo"]
+  ) => Promise<void>;
   refreshConversations: () => Promise<void>;
   refreshFriends: () => Promise<void>;
   addFriendByLineId: (lineId: string) => Promise<{ success: boolean; message?: string; friend?: User }>;
@@ -233,8 +239,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
   const sendMessage = async (
     content: string,
-    type: "TEXT" | "STICKER" | "IMAGE" = "TEXT",
-    mediaUrl?: string
+    type: "TEXT" | "STICKER" | "IMAGE" | "AUDIO" = "TEXT",
+    mediaUrl?: string,
+    replyToId?: string,
+    replyToPreview?: Message["replyTo"]
   ) => {
     if (!activeConversation || (!content.trim() && !mediaUrl)) return;
 
@@ -244,9 +252,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         id: `temp_${Date.now()}`,
         conversationId: activeConversation.id,
         senderId: user!.id,
-        content: content.trim() || (type === "STICKER" ? "[Sticker]" : "[Image]"),
+        content:
+          content.trim() ||
+          (type === "STICKER"
+            ? "[Sticker]"
+            : type === "AUDIO"
+            ? "[Voice Message]"
+            : "[Image]"),
         type,
         mediaUrl: mediaUrl || null,
+        replyToId: replyToId || null,
+        replyTo: replyToPreview || null,
         createdAt: new Date().toISOString(),
         sender: {
           id: user!.id,
@@ -264,7 +280,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: content.trim(), type, mediaUrl }),
+          body: JSON.stringify({
+            content: content.trim(),
+            type,
+            mediaUrl,
+            replyToId,
+          }),
         }
       );
 

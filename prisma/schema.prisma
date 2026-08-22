@@ -59,8 +59,11 @@ model Message {
   conversationId String
   senderId       String
   content        String
-  type           String       @default("TEXT") // TEXT, STICKER, IMAGE
+  type           String       @default("TEXT") // TEXT, STICKER, IMAGE, AUDIO
   mediaUrl       String?
+  replyToId      String?
+  replyTo        Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies        Message[]    @relation("MessageReplies")
   createdAt      DateTime     @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

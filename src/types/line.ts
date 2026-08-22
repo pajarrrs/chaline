@@ -18,8 +18,20 @@ export interface Message {
   conversationId: string;
   senderId: string;
   content: string;
-  type: "TEXT" | "STICKER" | "IMAGE";
+  type: "TEXT" | "STICKER" | "IMAGE" | "AUDIO";
   mediaUrl?: string | null;
+  replyToId?: string | null;
+  replyTo?: {
+    id: string;
+    content: string;
+    type: "TEXT" | "STICKER" | "IMAGE" | "AUDIO";
+    mediaUrl?: string | null;
+    sender: {
+      id: string;
+      name: string;
+      lineId: string;
+    };
+  } | null;
   createdAt: string;
   sender: {
     id: string;
@@ -29,8 +41,9 @@ export interface Message {
   };
 }
 
-export interface Participant {
+export interface ConversationParticipant {
   id: string;
+  conversationId: string;
   userId: string;
   lastReadAt: string;
   user: User;
@@ -40,7 +53,7 @@ export interface Conversation {
   id: string;
   createdAt: string;
   updatedAt: string;
-  participants: Participant[];
+  participants: ConversationParticipant[];
   lastMessage?: Message | null;
   unreadCount?: number;
 }

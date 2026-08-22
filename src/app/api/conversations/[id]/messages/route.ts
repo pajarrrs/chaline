@@ -44,7 +44,7 @@ export async function GET(
       },
     });
 
-    // Fetch messages
+    // Fetch messages with replyTo data
     const messages = await prisma.message.findMany({
       where: { conversationId },
       include: {
@@ -54,6 +54,21 @@ export async function GET(
             lineId: true,
             name: true,
             avatar: true,
+          },
+        },
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            mediaUrl: true,
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                lineId: true,
+              },
+            },
           },
         },
       },
@@ -105,7 +120,7 @@ export async function POST(
 
     const { id: conversationId } = await params;
     const body = await req.json();
-    const { content, type = "TEXT", mediaUrl } = body;
+    const { content, type = "TEXT", mediaUrl, replyToId } = body;
 
     if (!content && !mediaUrl) {
       return NextResponse.json(
@@ -137,9 +152,16 @@ export async function POST(
         data: {
           conversationId,
           senderId: session.userId,
-          content: content || (type === "STICKER" ? "[Sticker]" : "[Image]"),
-          type: type as "TEXT" | "STICKER" | "IMAGE",
+          content:
+            content ||
+            (type === "STICKER"
+              ? "[Sticker]"
+              : type === "AUDIO"
+              ? "[Voice Message]"
+              : "[Image]"),
+          type: type as "TEXT" | "STICKER" | "IMAGE" | "AUDIO",
           mediaUrl: mediaUrl || null,
+          replyToId: replyToId || null,
         },
         include: {
           sender: {
@@ -148,6 +170,21 @@ export async function POST(
               lineId: true,
               name: true,
               avatar: true,
+            },
+          },
+          replyTo: {
+            select: {
+              id: true,
+              content: true,
+              type: true,
+              mediaUrl: true,
+              sender: {
+                select: {
+                  id: true,
+                  name: true,
+                  lineId: true,
+                },
+              },
             },
           },
         },
