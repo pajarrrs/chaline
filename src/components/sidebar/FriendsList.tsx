@@ -1,16 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { Search, UserPlus, MessageSquare, Sparkles, Sun, Moon, LogOut } from "lucide-react";
+import { Search, UserPlus, MessageSquare, Sparkles, Sun, Moon, Loader2 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
 import { useTheme } from "next-themes";
 
 export function FriendsList() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const {
     friends,
     startChatWithFriend,
+    isStartingChat,
     setIsAddFriendModalOpen,
     setProfileModalUser,
   } = useChat();
@@ -135,8 +136,10 @@ export function FriendsList() {
             {filteredFriends.map((f) => (
               <div
                 key={f.id}
-                className="p-2.5 rounded-2xl hover:bg-neutral-100 dark:hover:bg-white/[0.04] transition-colors flex items-center justify-between group cursor-pointer"
-                onClick={() => startChatWithFriend(f.friend)}
+                className={`p-2.5 rounded-2xl hover:bg-neutral-100 dark:hover:bg-white/[0.04] transition-colors flex items-center justify-between group cursor-pointer ${
+                  isStartingChat ? "opacity-60 pointer-events-none" : ""
+                }`}
+                onClick={() => !isStartingChat && startChatWithFriend(f.friend)}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
                   <div className="w-11 h-11 rounded-full overflow-hidden ring-1 ring-black/[0.08] dark:ring-white/[0.1] flex-shrink-0">
@@ -158,7 +161,11 @@ export function FriendsList() {
                 </div>
 
                 <div className="p-2 rounded-xl bg-neutral-100 dark:bg-white/[0.06] text-neutral-600 dark:text-neutral-300 group-hover:bg-[#06C755] group-hover:text-white transition-all flex-shrink-0">
-                  <MessageSquare className="w-4 h-4" />
+                  {isStartingChat ? (
+                    <Loader2 className="w-4 h-4 animate-spin text-[#06C755]" />
+                  ) : (
+                    <MessageSquare className="w-4 h-4" />
+                  )}
                 </div>
               </div>
             ))}

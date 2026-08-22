@@ -18,6 +18,7 @@ interface ChatContextType {
   activeConversation: Conversation | null;
   messages: Message[];
   loadingMessages: boolean;
+  isStartingChat: boolean;
   isAddFriendModalOpen: boolean;
   setIsAddFriendModalOpen: (open: boolean) => void;
   profileModalUser: User | null;
@@ -41,11 +42,19 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
+  const [isStartingChat, setIsStartingChat] = useState(false);
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<User | null>(null);
 
   const prevLastMessageIdRef = useRef<string | null>(null);
   const prevUnreadCountRef = useRef<number>(0);
+  const activeConvIdRef = useRef<string | null>(null);
+  const isStartingChatLockRef = useRef<boolean>(false);
+
+  // Keep activeConvIdRef in sync
+  useEffect(() => {
+    activeConvIdRef.current = activeConversation?.id || null;
+  }, [activeConversation]);
 
   // Initialize audio sound on mount
   useEffect(() => {
@@ -150,24 +159,40 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user?.id]);
 
-  // Polling for live chat updates every 2.5s
+  // Fast Real-time Polling every 1.2 seconds + Focus listener
   useEffect(() => {
     if (!user) return;
     refreshConversations();
     refreshFriends();
 
-    const interval = setInterval(() => {
+    const doPoll = () => {
       refreshConversations();
-      if (activeConversation) {
-        fetchActiveMessages(activeConversation.id, false);
+      if (activeConvIdRef.current) {
+        fetchActiveMessages(activeConvIdRef.current, false);
       }
-    }, 2500);
+    };
 
-    return () => clearInterval(interval);
-  }, [user, activeConversation, refreshConversations, refreshFriends, fetchActiveMessages]);
+    const interval = setInterval(doPoll, 1200);
+
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === "visible") {
+        doPoll();
+      }
+    };
+
+    window.addEventListener("focus", handleVisibilityOrFocus);
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+    };
+  }, [user, refreshConversations, refreshFriends, fetchActiveMessages]);
 
   const selectConversation = (conv: Conversation | null) => {
     setActiveConversation(conv);
+    activeConvIdRef.current = conv?.id || null;
     if (!conv) {
       setMessages([]);
       prevLastMessageIdRef.current = null;
@@ -181,6 +206,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   };
 
   const startChatWithFriend = async (friendUser: User) => {
+    if (isStartingChatLockRef.current) return;
+    isStartingChatLockRef.current = true;
+    setIsStartingChat(true);
+
     try {
       const res = await fetch("/api/conversations", {
         method: "POST",
@@ -196,6 +225,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       }
     } catch (e) {
       console.error("Failed to start chat:", e);
+    } finally {
+      isStartingChatLockRef.current = false;
+      setIsStartingChat(false);
     }
   };
 
@@ -279,6 +311,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         activeConversation,
         messages,
         loadingMessages,
+        isStartingChat,
         isAddFriendModalOpen,
         setIsAddFriendModalOpen,
         profileModalUser,

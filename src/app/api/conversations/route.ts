@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getSessionUser } from "@/lib/auth";
 
-// GET all conversations for the logged in user
+// GET all conversations for the logged in user with deduplication
 export async function GET(req: NextRequest) {
   try {
     const session = await getSessionUser();
@@ -50,7 +50,24 @@ export async function GET(req: NextRequest) {
       orderBy: { updatedAt: "desc" },
     });
 
-    const formatted = conversations.map((conv) => {
+    // Deduplicate conversations per pair of users to prevent duplicate rooms
+    const seenOtherUserIds = new Set<string>();
+    const deduplicated: typeof conversations = [];
+
+    for (const conv of conversations) {
+      const otherParticipant = conv.participants.find(
+        (p) => p.userId !== session.userId
+      );
+      if (otherParticipant) {
+        if (seenOtherUserIds.has(otherParticipant.userId)) {
+          continue; // Skip duplicate room
+        }
+        seenOtherUserIds.add(otherParticipant.userId);
+      }
+      deduplicated.push(conv);
+    }
+
+    const formatted = deduplicated.map((conv) => {
       const myParticipant = conv.participants.find(
         (p) => p.userId === session.userId
       );
@@ -84,7 +101,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: Create or retrieve conversation between current user and target user
+// POST: Create or retrieve conversation between current user and target user (strict 1-on-1 deduplication)
 export async function POST(req: NextRequest) {
   try {
     const session = await getSessionUser();
@@ -98,6 +115,13 @@ export async function POST(req: NextRequest) {
     if (!targetUserId) {
       return NextResponse.json(
         { error: "targetUserId is required." },
+        { status: 400 }
+      );
+    }
+
+    if (targetUserId === session.userId) {
+      return NextResponse.json(
+        { error: "Cannot create conversation with yourself." },
         { status: 400 }
       );
     }
@@ -125,6 +149,7 @@ export async function POST(req: NextRequest) {
           },
         },
       },
+      orderBy: { updatedAt: "desc" },
     });
 
     if (existing) {
