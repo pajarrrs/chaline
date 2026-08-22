@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #FFFFFF;
+    --foreground: #111827;
+    --rail-bg: #2B2F3E;
+    --rail-text: #A0A5B5;
+    --list-bg: #FFFFFF;
+    --chat-bg: #ABC1D1;
+    --card-border: rgba(0, 0, 0, 0.08);
+  }
+
+  .dark {
+    --background: #111218;
+    --foreground: #F3F4F6;
+    --rail-bg: #181920;
+    --rail-text: #8E92A4;
+    --list-bg: #1C1E26;
+    --chat-bg: #13141B;
+    --card-border: rgba(255, 255, 255, 0.08);
+  }
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  overflow: hidden;
+  user-select: none;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Custom modern scrollbar */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(150, 150, 150, 0.25);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(150, 150, 150, 0.45);
+}
+
+/* Chat bubble styling */
+.line-bubble-me {
+  background-color: #8CE071;
+  color: #111827;
+  border-radius: 18px 4px 18px 18px;
+}
+.dark .line-bubble-me {
+  background-color: #058639;
+  color: #FFFFFF;
+  border-radius: 18px 4px 18px 18px;
+}
+
+.line-bubble-other {
+  background-color: #FFFFFF;
+  color: #111827;
+  border-radius: 4px 18px 18px 18px;
+}
+.dark .line-bubble-other {
+  background-color: #262935;
+  color: #F3F4F6;
+  border-radius: 4px 18px 18px 18px;
+}
