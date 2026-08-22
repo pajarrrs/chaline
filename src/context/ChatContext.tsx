@@ -53,8 +53,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<User | null>(null);
 
-  const prevLastMessageIdRef = useRef<string | null>(null);
-  const prevUnreadCountRef = useRef<number>(0);
   const activeConvIdRef = useRef<string | null>(null);
   const isStartingChatLockRef = useRef<boolean>(false);
   const sentMessageIdsRef = useRef<Set<string>>(new Set());
@@ -80,7 +78,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     return await requestNotificationPermission();
   };
 
-  // Fetch Conversations
+  // Fetch Conversations (Initial Load & when tab is refocused)
   const refreshConversations = useCallback(async () => {
     if (!user) return;
     try {
@@ -90,7 +88,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const newConversations: Conversation[] = data.conversations || [];
         setConversations(newConversations);
 
-        // Keep activeConversation in sync if open
         if (activeConvIdRef.current) {
           const matched = newConversations.find(
             (c) => c.id === activeConvIdRef.current
@@ -99,48 +96,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             setActiveConversation((prev) => (prev ? { ...prev, ...matched } : matched));
           }
         }
-
-        // Background unread count tracker (Only if sender is NOT me)
-        const currentTotalUnread = newConversations.reduce(
-          (acc, curr) => acc + (curr.unreadCount || 0),
-          0
-        );
-
-        if (currentTotalUnread > prevUnreadCountRef.current) {
-          const unreadChat = newConversations.find(
-            (c) =>
-              (c.unreadCount || 0) > 0 &&
-              c.lastMessage &&
-              user &&
-              c.lastMessage.senderId !== user.id &&
-              c.lastMessage.senderId !== currentUserIdRef.current &&
-              !sentMessageIdsRef.current.has(c.lastMessage.id)
-          );
-
-          if (unreadChat && unreadChat.lastMessage) {
-            playNotificationSound();
-            const sender = unreadChat.lastMessage.sender;
-            showBrowserNotification(`Chaline • ${sender.name}`, {
-              body:
-                unreadChat.lastMessage.type === "STICKER"
-                  ? "✨ Sent a sticker"
-                  : unreadChat.lastMessage.type === "IMAGE"
-                  ? "📷 Sent a photo"
-                  : unreadChat.lastMessage.type === "AUDIO"
-                  ? "🎤 Sent a voice note"
-                  : unreadChat.lastMessage.content,
-              icon: sender.avatar || "/icons/icon-192x192.png",
-            });
-          }
-        }
-        prevUnreadCountRef.current = currentTotalUnread;
       }
     } catch (e) {
       console.error("Error loading conversations:", e);
     }
   }, [user]);
 
-  // Fetch Friends
+  // Fetch Friends (Initial Load)
   const refreshFriends = useCallback(async () => {
     if (!user) return;
     try {
@@ -154,8 +116,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch Messages for active conversation
-  const fetchActiveMessages = useCallback(async (convId: string, showLoader = false) => {
+  // Fetch Messages for active conversation (Only called ONCE when clicking / opening a conversation)
+  const fetchActiveMessages = useCallback(async (convId: string, showLoader = true) => {
     if (showLoader) setLoadingMessages(true);
     try {
       const res = await fetch(`/api/conversations/${convId}/messages`);
@@ -164,7 +126,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const newMessages: Message[] = data.messages || [];
 
         setMessages((prev) => {
-          // Keep pending optimistic messages (temp_...) until confirmed by server
           const pending = prev.filter((m) => m.id.startsWith("temp_"));
           if (pending.length === 0) return newMessages;
 
@@ -172,63 +133,33 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           const stillPending = pending.filter((p) => !serverIds.has(p.id));
           return [...newMessages, ...stillPending];
         });
-
-        if (newMessages.length > 0) {
-          const lastMsg = newMessages[newMessages.length - 1];
-          const isFromOther =
-            user &&
-            lastMsg.senderId !== user.id &&
-            lastMsg.senderId !== currentUserIdRef.current &&
-            !sentMessageIdsRef.current.has(lastMsg.id);
-
-          if (
-            prevLastMessageIdRef.current &&
-            lastMsg.id !== prevLastMessageIdRef.current &&
-            isFromOther
-          ) {
-            playNotificationSound();
-            showBrowserNotification(`Chaline • ${lastMsg.sender.name}`, {
-              body:
-                lastMsg.type === "STICKER"
-                  ? "✨ Sent a sticker"
-                  : lastMsg.type === "IMAGE"
-                  ? "📷 Sent a photo"
-                  : lastMsg.type === "AUDIO"
-                  ? "🎤 Sent a voice note"
-                  : lastMsg.content,
-              icon: lastMsg.sender.avatar || "/icons/icon-192x192.png",
-            });
-          }
-          prevLastMessageIdRef.current = lastMsg.id;
-        }
       }
     } catch (e) {
       console.error("Error fetching messages:", e);
     } finally {
       if (showLoader) setLoadingMessages(false);
     }
-  }, [user]);
+  }, []);
 
-  // Handle incoming message from Realtime WebSocket (Instant 0 ms!)
+  // Handle incoming message from Realtime WebSocket (Pure Event-Driven: 0 API GET Calls!)
   const handleRealtimeIncomingMessage = useCallback(
     (newMsg: Message) => {
       if (!newMsg) return;
 
-      // 1. If message was sent by ME, strictly ignore!
+      // 1. If sent by current logged-in user, ignore self-notification
       const myId = user?.id || currentUserIdRef.current;
-      if (myId && newMsg.senderId === myId) return;
-      if (sentMessageIdsRef.current.has(newMsg.id)) return;
+      const isMe = myId && newMsg.senderId === myId;
+      if (isMe || sentMessageIdsRef.current.has(newMsg.id)) return;
 
-      // 2. If active conversation matches, append immediately
+      // 2. If viewing this chat room, append directly to messages state (Instant 0 ms!)
       if (activeConvIdRef.current === newMsg.conversationId) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
-        prevLastMessageIdRef.current = newMsg.id;
       }
 
-      // 3. Play sound & notification for incoming message
+      // 3. Play sound & browser notification for incoming message
       playNotificationSound();
       showBrowserNotification(`Chaline • ${newMsg.sender?.name || "Friend"}`, {
         body:
@@ -242,19 +173,44 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         icon: newMsg.sender?.avatar || "/icons/icon-192x192.png",
       });
 
-      refreshConversations();
+      // 4. Update conversations list state in memory without hitting GET API
+      setConversations((prev) => {
+        const isCurrentOpen = activeConvIdRef.current === newMsg.conversationId;
+        const exists = prev.some((c) => c.id === newMsg.conversationId);
+
+        if (!exists) {
+          refreshConversations();
+          return prev;
+        }
+
+        return prev
+          .map((c) => {
+            if (c.id === newMsg.conversationId) {
+              return {
+                ...c,
+                lastMessage: newMsg,
+                updatedAt: newMsg.createdAt,
+                unreadCount: isCurrentOpen ? 0 : (c.unreadCount || 0) + 1,
+              };
+            }
+            return c;
+          })
+          .sort(
+            (a, b) =>
+              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          );
+      });
     },
     [user, refreshConversations]
   );
 
-  // Supabase Realtime WebSockets Listener
+  // Pure Supabase WebSocket Setup (ZERO Polling Intervals)
   useEffect(() => {
     if (!user) return;
     refreshConversations();
     refreshFriends();
 
     if (supabase) {
-      // Connect to global chat realtime channel with broadcast enabled
       const channel = supabase
         .channel("chaline-realtime-global", {
           config: {
@@ -266,43 +222,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             handleRealtimeIncomingMessage(payload.payload.message);
           }
         })
-        .on(
-          "postgres_changes",
-          {
-            event: "INSERT",
-            schema: "public",
-            table: "Message",
-          },
-          (payload) => {
-            const newMsg = payload.new as any;
-            if (newMsg && activeConvIdRef.current === newMsg.conversationId) {
-              fetchActiveMessages(newMsg.conversationId, false);
-            }
-            refreshConversations();
-          }
-        )
         .subscribe((status) => {
-          console.log("[Supabase Realtime Status]:", status);
+          console.log("[Supabase WebSocket]:", status);
         });
 
       channelRef.current = channel;
     }
 
-    // Fast 1.2s Hybrid Sync Loop (guarantees 100% realtime even if WebSocket drops or env key missing)
-    const syncInterval = setInterval(() => {
-      refreshConversations();
-      if (activeConvIdRef.current) {
-        fetchActiveMessages(activeConvIdRef.current, false);
-      }
-    }, 1200);
-
-    // Auto-sync when user wakes up device / refocuses window tab
+    // Sync once when user returns to window tab (wake from sleep)
     const handleFocus = () => {
       if (document.visibilityState === "visible") {
         refreshConversations();
-        if (activeConvIdRef.current) {
-          fetchActiveMessages(activeConvIdRef.current, false);
-        }
       }
     };
 
@@ -313,22 +243,22 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
       }
-      clearInterval(syncInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
-  }, [user, refreshConversations, refreshFriends, fetchActiveMessages, handleRealtimeIncomingMessage]);
+  }, [user, refreshConversations, refreshFriends, handleRealtimeIncomingMessage]);
 
   const selectConversation = (conv: Conversation | null) => {
     setActiveConversation(conv);
     activeConvIdRef.current = conv?.id || null;
     if (!conv) {
       setMessages([]);
-      prevLastMessageIdRef.current = null;
       return;
     }
+    // Fetch initial chat history ONCE
     fetchActiveMessages(conv.id, true);
-    // Mark as read in state
+
+    // Mark as read in local state
     setConversations((prev) =>
       prev.map((c) => (c.id === conv.id ? { ...c, unreadCount: 0 } : c))
     );
@@ -399,7 +329,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       };
 
       setMessages((prev) => [...prev, tempMessage]);
-      prevLastMessageIdRef.current = tempId;
+
+      // Update local conversations last message snippet immediately
+      setConversations((prev) =>
+        prev
+          .map((c) =>
+            c.id === activeConversation.id
+              ? { ...c, lastMessage: tempMessage, updatedAt: tempMessage.createdAt }
+              : c
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+          )
+      );
 
       const res = await fetch(
         `/api/conversations/${activeConversation.id}/messages`,
@@ -420,12 +363,12 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const serverMessage = data.message;
         sentMessageIdsRef.current.add(serverMessage.id);
 
+        // Replace optimistic temp message with confirmed server message
         setMessages((prev) =>
           prev.map((m) => (m.id === tempId ? serverMessage : m))
         );
-        prevLastMessageIdRef.current = serverMessage.id;
 
-        // Broadcast to WebSocket subscribers for instant 0 ms delivery
+        // Broadcast to other users via WebSocket (Instant 0 ms delivery, ZERO API calls on receiver!)
         if (channelRef.current) {
           channelRef.current.send({
             type: "broadcast",
@@ -433,8 +376,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             payload: { message: serverMessage },
           });
         }
-
-        refreshConversations();
       } else {
         console.error("Failed to send message:", await res.text());
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
