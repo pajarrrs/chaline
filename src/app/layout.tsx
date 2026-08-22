@@ -15,6 +15,16 @@ export const metadata: Metadata = {
   title: "Chaline Messenger • Live Chat & Friends",
   description:
     "Real-time Chaline style messenger web application built with Next.js, Prisma SQLite, and Tailwind CSS.",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Chaline",
+  },
+  icons: {
+    icon: "/icons/icon-192x192.png",
+    apple: "/icons/icon-192x192.png",
+  },
 };
 
 export default function RootLayout({
