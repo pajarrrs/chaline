@@ -31,7 +31,7 @@ interface ChatAreaProps {
   onBackMobile?: () => void;
 }
 
-// Custom Voice Note Player Component
+// Custom Voice Note Player Component (Fix Infinity:NaN on WebM in mobile/Chrome)
 function VoiceNotePlayer({
   audioUrl,
   isMe,
@@ -49,14 +49,28 @@ function VoiceNotePlayer({
     const audio = new Audio(audioUrl);
     audioRef.current = audio;
 
-    const onLoadedMetadata = () => {
-      if (audio.duration && !isNaN(audio.duration)) {
+    const setAudioDuration = () => {
+      if (audio.duration && !isNaN(audio.duration) && isFinite(audio.duration)) {
         setDuration(audio.duration);
+      } else {
+        // Fix for recorded WebM infinity duration in Chrome/Android
+        audio.currentTime = 1e101;
+        audio.ontimeupdate = function () {
+          this.ontimeupdate = () => {};
+          audio.currentTime = 0;
+          if (audio.duration && isFinite(audio.duration)) {
+            setDuration(audio.duration);
+          }
+        };
       }
     };
 
+    const onLoadedMetadata = () => {
+      setAudioDuration();
+    };
+
     const onTimeUpdate = () => {
-      if (audio.duration) {
+      if (audio.duration && isFinite(audio.duration)) {
         setCurrentTime(audio.currentTime);
         setProgress((audio.currentTime / audio.duration) * 100);
       }
@@ -69,12 +83,14 @@ function VoiceNotePlayer({
     };
 
     audio.addEventListener("loadedmetadata", onLoadedMetadata);
+    audio.addEventListener("durationchange", onLoadedMetadata);
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("ended", onEnded);
 
     return () => {
       audio.pause();
       audio.removeEventListener("loadedmetadata", onLoadedMetadata);
+      audio.removeEventListener("durationchange", onLoadedMetadata);
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("ended", onEnded);
     };
@@ -91,7 +107,7 @@ function VoiceNotePlayer({
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!audioRef.current || !duration) return;
+    if (!audioRef.current || !duration || !isFinite(duration)) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const pos = (e.clientX - rect.left) / rect.width;
     const newTime = pos * duration;
@@ -101,7 +117,7 @@ function VoiceNotePlayer({
   };
 
   const formatTime = (sec: number) => {
-    if (!sec || isNaN(sec)) return "0:00";
+    if (!sec || isNaN(sec) || !isFinite(sec)) return "0:00";
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
     return `${m}:${s < 10 ? "0" : ""}${s}`;
@@ -156,6 +172,9 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     loadingMessages,
     sendMessage,
     setProfileModalUser,
+    onlineUserIds,
+    typingUsers,
+    sendTypingStatus,
   } = useChat();
 
   const [inputContent, setInputContent] = useState("");
@@ -178,6 +197,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const typingDebounceTimer = useRef<NodeJS.Timeout | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -187,10 +207,25 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
   );
   const otherUser = otherParticipant?.user;
 
-  // Auto scroll to bottom when messages update
+  const isOtherOnline = otherUser ? onlineUserIds.includes(otherUser.id) : false;
+  const isOtherTyping = activeConversation ? !!typingUsers[activeConversation.id] : false;
+
+  // Auto scroll to bottom when messages update or when typing starts
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, isOtherTyping]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputContent(val);
+
+    // Send typing broadcast debounced
+    sendTypingStatus(true);
+    if (typingDebounceTimer.current) clearTimeout(typingDebounceTimer.current);
+    typingDebounceTimer.current = setTimeout(() => {
+      sendTypingStatus(false);
+    }, 2500);
+  };
 
   const handleSendText = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -199,6 +234,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     const currentReply = replyingTo;
     setInputContent("");
     setReplyingTo(null);
+    sendTypingStatus(false);
 
     const replyPreview = currentReply
       ? {
@@ -397,7 +433,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         className="hidden"
       />
 
-      {/* 1. Chat Header */}
+      {/* 1. Chat Header with Online/Offline & Typing Status */}
       <div className="h-16 px-3 sm:px-6 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 flex-shrink-0">
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Back button for mobile */}
@@ -414,7 +450,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             onClick={() => setProfileModalUser(otherUser)}
             className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group min-w-0"
           >
-            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden ring-2 ring-[#06C755] flex-shrink-0 group-hover:scale-105 transition-transform">
+            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-full flex-shrink-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={
@@ -422,16 +458,41 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                   "https://api.dicebear.com/7.x/bottts/svg?seed=User"
                 }
                 alt={otherUser.name}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover rounded-full ring-2 ring-[#06C755]"
+              />
+              {/* Online Presence Indicator Badge */}
+              <span
+                className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-white dark:ring-[#181A22] ${
+                  isOtherOnline ? "bg-[#06C755]" : "bg-neutral-400"
+                }`}
+                title={isOtherOnline ? "Online" : "Offline"}
               />
             </div>
             <div className="flex flex-col min-w-0">
               <span className="text-xs font-bold text-neutral-900 dark:text-white truncate group-hover:text-[#06C755] transition-colors">
                 {otherUser.name}
               </span>
-              <span className="text-[10px] sm:text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
-                {otherUser.statusMessage || `Chaline ID: @${otherUser.lineId}`}
-              </span>
+
+              {/* Dynamic Status: Typing / Online / Status message */}
+              {isOtherTyping ? (
+                <span className="text-[10px] sm:text-[11px] text-[#06C755] font-bold flex items-center gap-1 animate-pulse">
+                  <span>typing</span>
+                  <span className="inline-flex gap-0.5">
+                    <span className="w-1 h-1 rounded-full bg-[#06C755] animate-bounce" />
+                    <span className="w-1 h-1 rounded-full bg-[#06C755] animate-bounce [animation-delay:0.15s]" />
+                    <span className="w-1 h-1 rounded-full bg-[#06C755] animate-bounce [animation-delay:0.3s]" />
+                  </span>
+                </span>
+              ) : isOtherOnline ? (
+                <span className="text-[10px] sm:text-[11px] text-[#06C755] font-medium flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#06C755] animate-pulse" />
+                  Online
+                </span>
+              ) : (
+                <span className="text-[10px] sm:text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                  {otherUser.statusMessage || `Chaline ID: @${otherUser.lineId}`}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -637,6 +698,31 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             );
           })
         )}
+
+        {/* Live Typing Bubble in Chat Area */}
+        {isOtherTyping && (
+          <div className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 duration-150">
+            <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1]">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={otherUser.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
+                alt={otherUser.name}
+                className="w-full h-full object-cover"
+              />
+            </div>
+            <div className="px-3.5 py-2 rounded-2xl bg-white/80 dark:bg-[#1E202B]/80 backdrop-blur-sm border border-black/[0.06] dark:border-white/[0.08] flex items-center gap-1.5 shadow-sm">
+              <span className="text-[11px] text-neutral-500 font-medium">
+                {otherUser.name} is typing
+              </span>
+              <span className="inline-flex gap-0.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#06C755] animate-bounce" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#06C755] animate-bounce [animation-delay:0.15s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-[#06C755] animate-bounce [animation-delay:0.3s]" />
+              </span>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
@@ -905,7 +991,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                 type="text"
                 placeholder="Type a message on Chaline..."
                 value={inputContent}
-                onChange={(e) => setInputContent(e.target.value)}
+                onChange={handleInputChange}
                 className="flex-1 min-w-0 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
               />
 

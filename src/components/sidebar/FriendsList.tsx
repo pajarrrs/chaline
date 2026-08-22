@@ -14,6 +14,7 @@ export function FriendsList() {
     isStartingChat,
     setIsAddFriendModalOpen,
     setProfileModalUser,
+    onlineUserIds,
   } = useChat();
   const [search, setSearch] = useState("");
   const { resolvedTheme, setTheme } = useTheme();
@@ -142,18 +143,28 @@ export function FriendsList() {
                 onClick={() => !isStartingChat && startChatWithFriend(f.friend)}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="w-11 h-11 rounded-full overflow-hidden ring-1 ring-black/[0.08] dark:ring-white/[0.1] flex-shrink-0">
+                  <div className="relative w-11 h-11 rounded-full flex-shrink-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={f.friend.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
                       alt={f.friend.name}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover rounded-full ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
+                    />
+                    <span
+                      className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-[#181A22] ${
+                        onlineUserIds.includes(f.friend.id) ? "bg-[#06C755]" : "bg-neutral-400"
+                      }`}
                     />
                   </div>
                   <div className="flex flex-col min-w-0 flex-1">
-                    <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
-                      {f.friend.name}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
+                        {f.friend.name}
+                      </span>
+                      {onlineUserIds.includes(f.friend.id) && (
+                        <span className="text-[9px] font-bold text-[#06C755]">● Online</span>
+                      )}
+                    </div>
                     <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
                       {f.friend.statusMessage || "Available on Chaline"}
                     </span>

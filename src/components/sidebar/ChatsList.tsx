@@ -13,6 +13,8 @@ export function ChatsList() {
     activeConversation,
     selectConversation,
     setActiveTab,
+    onlineUserIds,
+    typingUsers,
   } = useChat();
   const [search, setSearch] = useState("");
   const { resolvedTheme, setTheme } = useTheme();
@@ -127,6 +129,9 @@ export function ChatsList() {
             const otherUser = otherParticipant?.user;
             const isSelected = activeConversation?.id === conv.id;
 
+            const isOtherOnline = otherUser ? onlineUserIds.includes(otherUser.id) : false;
+            const isTyping = !!typingUsers[conv.id];
+
             return (
               <div
                 key={conv.id}
@@ -138,7 +143,7 @@ export function ChatsList() {
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
-                  <div className="relative w-12 h-12 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1]">
+                  <div className="relative w-12 h-12 rounded-full flex-shrink-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={
@@ -146,7 +151,12 @@ export function ChatsList() {
                         "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"
                       }
                       alt={otherUser?.name || "Chat"}
-                      className="w-full h-full object-cover"
+                      className="w-full h-full object-cover rounded-full ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
+                    />
+                    <span
+                      className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-white dark:ring-[#181A22] ${
+                        isOtherOnline ? "bg-[#06C755]" : "bg-neutral-400"
+                      }`}
                     />
                   </div>
 
@@ -163,15 +173,23 @@ export function ChatsList() {
                     </div>
 
                     <div className="flex items-center justify-between gap-1 mt-0.5">
-                      <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
-                        {conv.lastMessage
-                          ? conv.lastMessage.type === "STICKER"
-                            ? "✨ [Sticker]"
-                            : conv.lastMessage.type === "IMAGE"
-                            ? "📷 [Photo]"
-                            : conv.lastMessage.content
-                          : "No messages yet"}
-                      </span>
+                      {isTyping ? (
+                        <span className="text-[11px] text-[#06C755] font-bold flex items-center gap-1 animate-pulse">
+                          <span>typing...</span>
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+                          {conv.lastMessage
+                            ? conv.lastMessage.type === "STICKER"
+                              ? "✨ [Sticker]"
+                              : conv.lastMessage.type === "IMAGE"
+                              ? "📷 [Photo]"
+                              : conv.lastMessage.type === "AUDIO"
+                              ? "🎤 [Voice Note]"
+                              : conv.lastMessage.content
+                            : "No messages yet"}
+                        </span>
+                      )}
 
                       {conv.unreadCount && conv.unreadCount > 0 ? (
                         <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-[#06C755] text-white text-[10px] font-bold flex items-center justify-center flex-shrink-0">

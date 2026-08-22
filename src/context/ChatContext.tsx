@@ -37,6 +37,10 @@ interface ChatContextType {
   refreshFriends: () => Promise<void>;
   addFriendByLineId: (lineId: string) => Promise<{ success: boolean; message?: string; friend?: User }>;
   enableNotifications: () => Promise<boolean>;
+  // Realtime Presence & Typing
+  onlineUserIds: string[];
+  typingUsers: Record<string, boolean>; // convId -> isTyping
+  sendTypingStatus: (isTyping: boolean) => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -53,11 +57,16 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<User | null>(null);
 
+  // Presence & Typing states
+  const [onlineUserIds, setOnlineUserIds] = useState<string[]>([]);
+  const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
+
   const activeConvIdRef = useRef<string | null>(null);
   const isStartingChatLockRef = useRef<boolean>(false);
   const sentMessageIdsRef = useRef<Set<string>>(new Set());
   const currentUserIdRef = useRef<string | null>(null);
   const channelRef = useRef<any>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Keep refs in sync
   useEffect(() => {
@@ -78,7 +87,25 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     return await requestNotificationPermission();
   };
 
-  // Fetch Conversations (Initial Load & when tab is refocused)
+  // Send Typing Broadcast over WebSocket
+  const sendTypingStatus = useCallback(
+    (isTyping: boolean) => {
+      if (!channelRef.current || !activeConvIdRef.current || !user) return;
+
+      channelRef.current.send({
+        type: "broadcast",
+        event: "user_typing",
+        payload: {
+          conversationId: activeConvIdRef.current,
+          userId: user.id,
+          isTyping,
+        },
+      });
+    },
+    [user]
+  );
+
+  // Fetch Conversations (Initial Load & Tab Focus)
   const refreshConversations = useCallback(async () => {
     if (!user) return;
     try {
@@ -116,7 +143,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch Messages for active conversation (Only called ONCE when clicking / opening a conversation)
+  // Fetch Messages for active conversation (Initial room click)
   const fetchActiveMessages = useCallback(async (convId: string, showLoader = true) => {
     if (showLoader) setLoadingMessages(true);
     try {
@@ -141,7 +168,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  // Handle incoming message from Realtime WebSocket (Pure Event-Driven: 0 API GET Calls!)
+  // Handle incoming message from Realtime WebSocket (Pure Event-Driven)
   const handleRealtimeIncomingMessage = useCallback(
     (newMsg: Message) => {
       if (!newMsg) return;
@@ -151,7 +178,10 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const isMe = myId && newMsg.senderId === myId;
       if (isMe || sentMessageIdsRef.current.has(newMsg.id)) return;
 
-      // 2. If viewing this chat room, append directly to messages state (Instant 0 ms!)
+      // 2. Clear typing status when message arrives
+      setTypingUsers((prev) => ({ ...prev, [newMsg.conversationId]: false }));
+
+      // 3. If viewing this chat room, append directly to messages state (Instant 0 ms!)
       if (activeConvIdRef.current === newMsg.conversationId) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === newMsg.id)) return prev;
@@ -159,7 +189,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         });
       }
 
-      // 3. Play sound & browser notification for incoming message
+      // 4. Play sound & browser notification for incoming message
       playNotificationSound();
       showBrowserNotification(`Chaline • ${newMsg.sender?.name || "Friend"}`, {
         body:
@@ -173,7 +203,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         icon: newMsg.sender?.avatar || "/icons/icon-192x192.png",
       });
 
-      // 4. Update conversations list state in memory without hitting GET API
+      // 5. Update conversations list state in memory without hitting GET API
       setConversations((prev) => {
         const isCurrentOpen = activeConvIdRef.current === newMsg.conversationId;
         const exists = prev.some((c) => c.id === newMsg.conversationId);
@@ -204,27 +234,73 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     [user, refreshConversations]
   );
 
-  // Pure Supabase WebSocket Setup (ZERO Polling Intervals)
+  // Pure Supabase WebSocket Setup (Presence + Broadcast + Zero Polling)
   useEffect(() => {
     if (!user) return;
     refreshConversations();
     refreshFriends();
 
     if (supabase) {
-      const channel = supabase
-        .channel("chaline-realtime-global", {
-          config: {
-            broadcast: { self: false },
-          },
-        })
-        .on("broadcast", { event: "new_message" }, (payload) => {
-          if (payload?.payload?.message) {
-            handleRealtimeIncomingMessage(payload.payload.message);
+      const channel = supabase.channel("chaline-realtime-global", {
+        config: {
+          broadcast: { self: false },
+          presence: { key: user.id },
+        },
+      });
+
+      // Listen for message broadcasts
+      channel.on("broadcast", { event: "new_message" }, (payload) => {
+        if (payload?.payload?.message) {
+          handleRealtimeIncomingMessage(payload.payload.message);
+        }
+      });
+
+      // Listen for typing indicator
+      channel.on("broadcast", { event: "user_typing" }, (payload) => {
+        const { conversationId, userId, isTyping } = payload?.payload || {};
+        if (userId && userId !== user.id && conversationId) {
+          setTypingUsers((prev) => ({
+            ...prev,
+            [conversationId]: isTyping,
+          }));
+
+          // Auto-clear typing after 4 seconds if no stop signal
+          if (isTyping) {
+            if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+            typingTimeoutRef.current = setTimeout(() => {
+              setTypingUsers((prev) => ({
+                ...prev,
+                [conversationId]: false,
+              }));
+            }, 4000);
           }
-        })
-        .subscribe((status) => {
-          console.log("[Supabase WebSocket]:", status);
-        });
+        }
+      });
+
+      // Listen for Presence (Online / Offline status)
+      channel.on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        const activeIds = Object.keys(state);
+        setOnlineUserIds(activeIds);
+      });
+
+      channel.on("presence", { event: "join" }, ({ key }) => {
+        setOnlineUserIds((prev) => Array.from(new Set([...prev, key])));
+      });
+
+      channel.on("presence", { event: "leave" }, ({ key }) => {
+        setOnlineUserIds((prev) => prev.filter((id) => id !== key));
+      });
+
+      channel.subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await channel.track({
+            userId: user.id,
+            name: user.name,
+            onlineAt: new Date().toISOString(),
+          });
+        }
+      });
 
       channelRef.current = channel;
     }
@@ -300,6 +376,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     if (!activeConversation || (!content.trim() && !mediaUrl)) return;
 
     try {
+      // Clear typing indicator immediately upon sending
+      sendTypingStatus(false);
+
       const tempId = `temp_${Date.now()}`;
       sentMessageIdsRef.current.add(tempId);
 
@@ -428,6 +507,9 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         refreshFriends,
         addFriendByLineId,
         enableNotifications,
+        onlineUserIds,
+        typingUsers,
+        sendTypingStatus,
       }}
     >
       {children}
