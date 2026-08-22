@@ -9,6 +9,7 @@ import {
   Moon,
   Sun,
   Sparkles,
+  Bell,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
@@ -98,8 +99,23 @@ export function MainRail() {
           </div>
         </div>
 
-        {/* Bottom Rail: Theme toggle & Logout */}
-        <div className="flex flex-col items-center gap-3">
+          {/* Notification Sound & Permission Button */}
+          <button
+            onClick={async () => {
+              const granted = await enableNotifications();
+              if (granted) {
+                alert("🔔 Chaline Sound & Push Notifications enabled!");
+              } else {
+                alert("🔊 Sound notification test played.");
+              }
+            }}
+            className="w-10 h-10 rounded-2xl text-neutral-400 hover:text-[#06C755] hover:bg-white/[0.08] flex items-center justify-center transition-all"
+            title="Enable Sound & Notifications"
+          >
+            <Bell className="w-5 h-5" />
+          </button>
+
+          {/* Dark/Light toggle */}
           <button
             onClick={() => setTheme(isDark ? "light" : "dark")}
             className="w-10 h-10 rounded-2xl text-neutral-400 hover:text-white hover:bg-white/[0.08] flex items-center justify-center transition-all"

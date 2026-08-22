@@ -1,8 +1,14 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { Conversation, Friend, Message, User } from "@/types/line";
 import { useAuth } from "./AuthContext";
+import {
+  initNotificationSound,
+  playNotificationSound,
+  requestNotificationPermission,
+  showBrowserNotification,
+} from "@/lib/notification";
 
 interface ChatContextType {
   activeTab: "chats" | "friends";
@@ -22,6 +28,7 @@ interface ChatContextType {
   refreshConversations: () => Promise<void>;
   refreshFriends: () => Promise<void>;
   addFriendByLineId: (lineId: string) => Promise<{ success: boolean; message?: string; friend?: User }>;
+  enableNotifications: () => Promise<boolean>;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -37,6 +44,20 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const [isAddFriendModalOpen, setIsAddFriendModalOpen] = useState(false);
   const [profileModalUser, setProfileModalUser] = useState<User | null>(null);
 
+  const prevLastMessageIdRef = useRef<string | null>(null);
+  const prevUnreadCountRef = useRef<number>(0);
+
+  // Initialize audio sound on mount
+  useEffect(() => {
+    initNotificationSound();
+  }, []);
+
+  const enableNotifications = async () => {
+    initNotificationSound();
+    playNotificationSound();
+    return await requestNotificationPermission();
+  };
+
   // Fetch Conversations
   const refreshConversations = useCallback(async () => {
     if (!user) return;
@@ -44,7 +65,32 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/conversations");
       if (res.ok) {
         const data = await res.json();
-        setConversations(data.conversations || []);
+        const newConversations: Conversation[] = data.conversations || [];
+        setConversations(newConversations);
+
+        // Check if unread count increased from background chat
+        const currentTotalUnread = newConversations.reduce(
+          (acc, curr) => acc + (curr.unreadCount || 0),
+          0
+        );
+
+        if (currentTotalUnread > prevUnreadCountRef.current) {
+          playNotificationSound();
+          const unreadChat = newConversations.find((c) => (c.unreadCount || 0) > 0);
+          if (unreadChat && unreadChat.lastMessage) {
+            const sender = unreadChat.lastMessage.sender;
+            showBrowserNotification(`Chaline • ${sender.name}`, {
+              body:
+                unreadChat.lastMessage.type === "STICKER"
+                  ? "✨ Sent a sticker"
+                  : unreadChat.lastMessage.type === "IMAGE"
+                  ? "📷 Sent a photo"
+                  : unreadChat.lastMessage.content,
+              icon: sender.avatar || "/icons/icon-192x192.png",
+            });
+          }
+        }
+        prevUnreadCountRef.current = currentTotalUnread;
       }
     } catch (e) {
       console.error("Error loading conversations:", e);
@@ -72,14 +118,37 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(`/api/conversations/${convId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages(data.messages || []);
+        const newMessages: Message[] = data.messages || [];
+        setMessages(newMessages);
+
+        // Check if a new message from other user arrived
+        if (newMessages.length > 0) {
+          const lastMsg = newMessages[newMessages.length - 1];
+          if (
+            prevLastMessageIdRef.current &&
+            lastMsg.id !== prevLastMessageIdRef.current &&
+            lastMsg.senderId !== user?.id
+          ) {
+            playNotificationSound();
+            showBrowserNotification(`Chaline • ${lastMsg.sender.name}`, {
+              body:
+                lastMsg.type === "STICKER"
+                  ? "✨ Sent a sticker"
+                  : lastMsg.type === "IMAGE"
+                  ? "📷 Sent a photo"
+                  : lastMsg.content,
+              icon: lastMsg.sender.avatar || "/icons/icon-192x192.png",
+            });
+          }
+          prevLastMessageIdRef.current = lastMsg.id;
+        }
       }
     } catch (e) {
       console.error("Error fetching messages:", e);
     } finally {
       if (showLoader) setLoadingMessages(false);
     }
-  }, []);
+  }, [user?.id]);
 
   // Polling for live chat updates every 2.5s
   useEffect(() => {
@@ -101,6 +170,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     setActiveConversation(conv);
     if (!conv) {
       setMessages([]);
+      prevLastMessageIdRef.current = null;
       return;
     }
     fetchActiveMessages(conv.id, true);
@@ -155,6 +225,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       };
 
       setMessages((prev) => [...prev, tempMessage]);
+      prevLastMessageIdRef.current = tempMessage.id;
 
       const res = await fetch(
         `/api/conversations/${activeConversation.id}/messages`,
@@ -170,6 +241,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         setMessages((prev) =>
           prev.map((m) => (m.id === tempMessage.id ? data.message : m))
         );
+        prevLastMessageIdRef.current = data.message.id;
         refreshConversations();
       }
     } catch (e) {
@@ -217,6 +289,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         refreshConversations,
         refreshFriends,
         addFriendByLineId,
+        enableNotifications,
       }}
     >
       {children}
