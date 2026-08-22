@@ -52,6 +52,8 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"chats" | "friends">("chats");
+
+  // Synchronous Hydration from LocalStorage
   const [conversations, setConversations] = useState<Conversation[]>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -91,6 +93,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
     return true;
   });
+
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
@@ -110,28 +113,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const channelRef = useRef<any>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messageCacheRef = useRef<Record<string, Message[]>>({});
-
-  // Restore client-side cache from localStorage on first paint (0 ms!)
-  useEffect(() => {
-    try {
-      const cachedConvs = localStorage.getItem("chaline_cache_convs");
-      if (cachedConvs) {
-        const parsed = JSON.parse(cachedConvs);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setConversations(parsed);
-          setLoadingConversations(false);
-        }
-      }
-      const cachedFriends = localStorage.getItem("chaline_cache_friends");
-      if (cachedFriends) {
-        const parsed = JSON.parse(cachedFriends);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setFriends(parsed);
-          setLoadingFriends(false);
-        }
-      }
-    } catch {}
-  }, []);
 
   // Keep refs in sync
   useEffect(() => {
@@ -238,7 +219,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch Messages for active conversation with In-Memory Caching
+  // Fetch Messages for active conversation with Dual-Layer Local Caching
   const fetchActiveMessages = useCallback(async (convId: string, showLoader = false) => {
     if (showLoader && !messageCacheRef.current[convId]) setLoadingMessages(true);
     try {
@@ -247,8 +228,11 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         const newMessages: Message[] = data.messages || [];
 
-        // Save to cache
+        // Save to in-memory + persistent localStorage cache
         messageCacheRef.current[convId] = newMessages;
+        try {
+          localStorage.setItem(`chaline_msgs_${convId}`, JSON.stringify(newMessages));
+        } catch {}
 
         if (activeConvIdRef.current === convId) {
           setMessages((prev) => {
@@ -281,11 +265,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       // 2. Clear typing status when message arrives
       setTypingUsers((prev) => ({ ...prev, [newMsg.conversationId]: false }));
 
-      // 3. Update memory cache
+      // 3. Update memory + localStorage cache
       if (messageCacheRef.current[newMsg.conversationId]) {
         const currentCached = messageCacheRef.current[newMsg.conversationId];
         if (!currentCached.some((m) => m.id === newMsg.id)) {
-          messageCacheRef.current[newMsg.conversationId] = [...currentCached, newMsg];
+          const updated = [...currentCached, newMsg];
+          messageCacheRef.current[newMsg.conversationId] = updated;
+          try {
+            localStorage.setItem(`chaline_msgs_${newMsg.conversationId}`, JSON.stringify(updated));
+          } catch {}
         }
       }
 
@@ -463,7 +451,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, refreshConversations, refreshFriends, handleRealtimeIncomingMessage]);
 
-  // Instant Room Selection (0 ms from Memory Cache)
+  // Instant Room Selection (0 ms from Dual-Layer Memory & LocalStorage Cache)
   const selectConversation = (conv: Conversation | null) => {
     setActiveConversation(conv);
     activeConvIdRef.current = conv?.id || null;
@@ -472,9 +460,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // 1. Instant Cache Render (0 ms!): If cached, load immediately
-    if (messageCacheRef.current[conv.id]) {
-      setMessages(messageCacheRef.current[conv.id]);
+    // 1. Instant Cache Render: Check RAM cache first, then LocalStorage
+    let cachedList = messageCacheRef.current[conv.id];
+    if ((!cachedList || cachedList.length === 0) && typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem(`chaline_msgs_${conv.id}`);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            cachedList = parsed;
+            messageCacheRef.current[conv.id] = parsed;
+          }
+        }
+      } catch {}
+    }
+
+    if (cachedList && cachedList.length > 0) {
+      setMessages(cachedList);
     } else if (conv.lastMessage) {
       setMessages([conv.lastMessage]);
     } else {
@@ -562,17 +564,17 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       setMessages((prev) => [...prev, tempMessage]);
 
-      // Update memory cache
-      if (messageCacheRef.current[activeConversation.id]) {
-        messageCacheRef.current[activeConversation.id] = [
-          ...messageCacheRef.current[activeConversation.id],
-          tempMessage,
-        ];
-      }
+      // Update RAM + LocalStorage cache
+      const currentList = messageCacheRef.current[activeConversation.id] || [];
+      const updatedList = [...currentList, tempMessage];
+      messageCacheRef.current[activeConversation.id] = updatedList;
+      try {
+        localStorage.setItem(`chaline_msgs_${activeConversation.id}`, JSON.stringify(updatedList));
+      } catch {}
 
       // Update local conversations last message snippet immediately
-      setConversations((prev) =>
-        prev
+      setConversations((prev) => {
+        const updated = prev
           .map((c) =>
             c.id === activeConversation.id
               ? { ...c, lastMessage: tempMessage, updatedAt: tempMessage.createdAt }
@@ -581,8 +583,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
           .sort(
             (a, b) =>
               new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-          )
-      );
+          );
+
+        try {
+          localStorage.setItem("chaline_cache_convs", JSON.stringify(updated));
+        } catch {}
+
+        return updated;
+      });
 
       // Instant 0ms WebSocket Broadcast to receiver!
       if (channelRef.current) {
@@ -615,10 +623,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               );
               // Update cache with server message
               if (messageCacheRef.current[activeConversation.id]) {
-                messageCacheRef.current[activeConversation.id] =
-                  messageCacheRef.current[activeConversation.id].map((m) =>
-                    m.id === tempId ? serverMsg : m
-                  );
+                const refreshed = messageCacheRef.current[activeConversation.id].map((m) =>
+                  m.id === tempId ? serverMsg : m
+                );
+                messageCacheRef.current[activeConversation.id] = refreshed;
+                try {
+                  localStorage.setItem(`chaline_msgs_${activeConversation.id}`, JSON.stringify(refreshed));
+                } catch {}
               }
             }
           } else {
