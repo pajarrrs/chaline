@@ -123,9 +123,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     activeConvIdRef.current = activeConversation?.id || null;
   }, [activeConversation]);
 
-  // Initialize audio sound on mount
+  // Initialize audio sound & auto-request notification permissions on mount
   useEffect(() => {
     initNotificationSound();
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "default") {
+        requestNotificationPermission().catch(() => {});
+      }
+    }
   }, []);
 
   const enableNotifications = async () => {

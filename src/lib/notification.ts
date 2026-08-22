@@ -40,6 +40,11 @@ export function initNotificationSound() {
         .catch(() => {
           isAudioUnlocked = true;
         });
+
+      // 3. Auto request notification permission on first interaction
+      if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
     } catch {
       isAudioUnlocked = true;
     }
@@ -134,8 +139,8 @@ export async function requestNotificationPermission(): Promise<boolean> {
   return false;
 }
 
-// Show native browser / PWA notification
-export function showBrowserNotification(
+// Show native browser / Android PWA notification
+export async function showBrowserNotification(
   title: string,
   options?: {
     body?: string;
@@ -145,21 +150,33 @@ export function showBrowserNotification(
 ) {
   if (typeof window === "undefined" || !("Notification" in window)) return;
 
-  if (Notification.permission === "granted") {
-    try {
-      const notif = new Notification(title, {
-        body: options?.body || "New message received",
-        icon: options?.icon || "/icons/icon-192x192.png",
-        badge: "/icons/icon-192x192.png",
-        tag: options?.tag || `chaline-${Date.now()}`,
-      });
+  if (Notification.permission !== "granted") return;
 
-      notif.onclick = () => {
-        window.focus();
-        notif.close();
-      };
-    } catch (e) {
-      console.warn("Notification error:", e);
-    }
+  const notifOptions: NotificationOptions = {
+    body: options?.body || "New message received",
+    icon: options?.icon || "/icons/icon-192x192.png",
+    badge: "/icons/icon-192x192.png",
+    tag: options?.tag || `chaline-${Date.now()}`,
+    vibrate: [200, 100, 200] as any,
+  };
+
+  // 1. Android Mobile Chrome & PWA: Requires ServiceWorkerRegistration.showNotification()!
+  if ("serviceWorker" in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && typeof reg.showNotification === "function") {
+        await reg.showNotification(title, notifOptions);
+        return;
+      }
+    } catch {}
   }
+
+  // 2. Desktop Browser fallback (Windows / Mac)
+  try {
+    const notif = new Notification(title, notifOptions);
+    notif.onclick = () => {
+      window.focus();
+      notif.close();
+    };
+  } catch {}
 }
