@@ -16,7 +16,6 @@ import {
   X,
   Reply,
   Mic,
-  Square,
   Trash2,
   Play,
   Pause,
@@ -109,28 +108,28 @@ function VoiceNotePlayer({
   };
 
   return (
-    <div className="flex items-center gap-3 py-1 min-w-[200px] max-w-[260px]">
+    <div className="flex items-center gap-2.5 py-1 min-w-[170px] max-w-[240px]">
       <button
         type="button"
         onClick={togglePlay}
-        className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-all active:scale-95 flex-shrink-0 ${
+        className={`w-8 h-8 rounded-full flex items-center justify-center shadow-sm transition-all active:scale-95 flex-shrink-0 ${
           isMe
             ? "bg-white text-[#058639]"
             : "bg-[#06C755] text-white"
         }`}
       >
         {isPlaying ? (
-          <Pause className="w-4 h-4 fill-current" />
+          <Pause className="w-3.5 h-3.5 fill-current" />
         ) : (
-          <Play className="w-4 h-4 fill-current ml-0.5" />
+          <Play className="w-3.5 h-3.5 fill-current ml-0.5" />
         )}
       </button>
 
-      <div className="flex-1 flex flex-col gap-1.5">
-        {/* Waveform / Progress bar */}
+      <div className="flex-1 flex flex-col gap-1 min-w-0">
+        {/* Progress bar */}
         <div
           onClick={handleSeek}
-          className="h-2 rounded-full bg-black/15 dark:bg-white/20 relative cursor-pointer overflow-hidden"
+          className="h-1.5 rounded-full bg-black/15 dark:bg-white/20 relative cursor-pointer overflow-hidden"
         >
           <div
             className={`h-full rounded-full transition-all ${
@@ -140,7 +139,7 @@ function VoiceNotePlayer({
           />
         </div>
 
-        <div className="flex items-center justify-between text-[10px] opacity-85 font-mono">
+        <div className="flex items-center justify-between text-[9px] opacity-85 font-mono">
           <span>{formatTime(currentTime)}</span>
           <span>{formatTime(duration || 0)}</span>
         </div>
@@ -386,7 +385,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
 
   return (
     <div
-      className="flex-1 h-full flex flex-col bg-[#ABC1D1] dark:bg-[#13141B] relative overflow-hidden"
+      className="flex-1 h-full flex flex-col bg-[#ABC1D1] dark:bg-[#13141B] relative overflow-hidden min-w-0"
       onPaste={handlePaste}
     >
       {/* Hidden File Input */}
@@ -399,13 +398,13 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
       />
 
       {/* 1. Chat Header */}
-      <div className="h-16 px-4 sm:px-6 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="h-16 px-3 sm:px-6 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-b border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           {/* Back button for mobile */}
           {onBackMobile && (
             <button
               onClick={onBackMobile}
-              className="md:hidden p-1.5 -ml-1 rounded-full text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.05]"
+              className="md:hidden p-1.5 -ml-1 rounded-full text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.05] flex-shrink-0"
             >
               <ChevronLeft className="w-6 h-6" />
             </button>
@@ -413,9 +412,9 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
 
           <div
             onClick={() => setProfileModalUser(otherUser)}
-            className="flex items-center gap-3 cursor-pointer group min-w-0"
+            className="flex items-center gap-2.5 sm:gap-3 cursor-pointer group min-w-0"
           >
-            <div className="relative w-10 h-10 rounded-full overflow-hidden ring-2 ring-[#06C755] flex-shrink-0 group-hover:scale-105 transition-transform">
+            <div className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden ring-2 ring-[#06C755] flex-shrink-0 group-hover:scale-105 transition-transform">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={
@@ -430,7 +429,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               <span className="text-xs font-bold text-neutral-900 dark:text-white truncate group-hover:text-[#06C755] transition-colors">
                 {otherUser.name}
               </span>
-              <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
+              <span className="text-[10px] sm:text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
                 {otherUser.statusMessage || `Chaline ID: @${otherUser.lineId}`}
               </span>
             </div>
@@ -438,7 +437,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         </div>
 
         {/* Header Actions */}
-        <div className="flex items-center gap-1 sm:gap-2 text-neutral-500 dark:text-neutral-400">
+        <div className="flex items-center gap-0.5 sm:gap-1.5 text-neutral-500 dark:text-neutral-400 flex-shrink-0">
           <button
             onClick={() => alert("Chaline Voice Call feature coming soon!")}
             className="p-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.06] hover:text-[#06C755] transition-colors"
@@ -464,7 +463,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
       </div>
 
       {/* 2. Messages Stream */}
-      <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col gap-4">
+      <div className="flex-1 overflow-y-auto p-3 sm:p-6 flex flex-col gap-3 sm:gap-4 min-h-0">
         {loadingMessages && messages.length === 0 ? (
           <div className="flex-1 flex items-center justify-center text-xs text-neutral-500">
             Loading Chaline chat history...
@@ -493,13 +492,13 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               <div
                 key={msg.id}
                 id={`msg-${msg.id}`}
-                className={`flex items-end gap-2 group/msg ${
+                className={`flex items-end gap-1.5 sm:gap-2 group/msg ${
                   isMe ? "justify-end" : "justify-start"
                 }`}
               >
                 {/* Other User Avatar */}
                 {!isMe && (
-                  <div className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1] mb-0.5">
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1] mb-0.5">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={
@@ -512,21 +511,21 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                   </div>
                 )}
 
-                {/* Quick Reply Button on hover / tap */}
+                {/* Quick Reply Button for ME */}
                 {isMe && (
                   <button
                     type="button"
                     onClick={() => setReplyingTo(msg)}
-                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center"
+                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center flex-shrink-0"
                     title="Reply"
                   >
-                    <Reply className="w-3.5 h-3.5" />
+                    <Reply className="w-3 h-3" />
                   </button>
                 )}
 
                 {/* Read status + Timestamp for ME */}
                 {isMe && (
-                  <div className="flex flex-col items-end text-[10px] text-neutral-600 dark:text-neutral-400 font-mono leading-tight mb-1 select-none">
+                  <div className="flex flex-col items-end text-[10px] text-neutral-600 dark:text-neutral-400 font-mono leading-tight mb-1 select-none flex-shrink-0">
                     {isRead && (
                       <span className="text-[#06C755] font-bold text-[9px]">
                         Read
@@ -537,11 +536,11 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                 )}
 
                 {/* Bubble / Media Content */}
-                <div className="max-w-[80%] sm:max-w-[65%] flex flex-col gap-1">
+                <div className="max-w-[82%] sm:max-w-[65%] flex flex-col gap-1 min-w-0">
                   {/* Quoted / Reply Preview Block */}
                   {msg.replyTo && (
                     <div
-                      className={`text-[11px] p-2.5 rounded-xl border-l-4 border-[#06C755] bg-black/10 dark:bg-white/10 backdrop-blur-sm flex flex-col gap-0.5 cursor-pointer hover:opacity-90 transition-opacity`}
+                      className={`text-[10px] sm:text-[11px] p-2 rounded-xl border-l-4 border-[#06C755] bg-black/10 dark:bg-white/10 backdrop-blur-sm flex flex-col gap-0.5 cursor-pointer hover:opacity-90 transition-opacity`}
                       onClick={() => {
                         const el = document.getElementById(`msg-${msg.replyTo?.id}`);
                         el?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -568,7 +567,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                       <img
                         src={msg.mediaUrl}
                         alt="Sticker"
-                        className="w-32 h-32 object-contain"
+                        className="w-28 h-28 sm:w-32 sm:h-32 object-contain"
                       />
                     </div>
                   ) : msg.type === "IMAGE" && msg.mediaUrl ? (
@@ -589,7 +588,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                       </div>
                       {msg.content && msg.content !== "[Image]" && (
                         <div
-                          className={`px-4 py-2 shadow-sm text-xs leading-relaxed break-words ${
+                          className={`px-3.5 py-2 shadow-sm text-xs leading-relaxed break-words ${
                             isMe ? "line-bubble-me" : "line-bubble-other"
                           }`}
                         >
@@ -599,7 +598,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                     </div>
                   ) : msg.type === "AUDIO" && msg.mediaUrl ? (
                     <div
-                      className={`px-3.5 py-2.5 shadow-sm text-xs leading-relaxed ${
+                      className={`px-3 py-2 shadow-sm text-xs leading-relaxed ${
                         isMe ? "line-bubble-me" : "line-bubble-other"
                       }`}
                     >
@@ -607,7 +606,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                     </div>
                   ) : (
                     <div
-                      className={`px-4 py-2.5 shadow-sm text-xs leading-relaxed break-words ${
+                      className={`px-3.5 py-2 sm:px-4 sm:py-2.5 shadow-sm text-xs leading-relaxed break-words ${
                         isMe ? "line-bubble-me" : "line-bubble-other"
                       }`}
                     >
@@ -616,21 +615,21 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                   )}
                 </div>
 
-                {/* Quick Reply Button on hover / tap for OTHER */}
+                {/* Quick Reply Button for OTHER */}
                 {!isMe && (
                   <button
                     type="button"
                     onClick={() => setReplyingTo(msg)}
-                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center"
+                    className="opacity-0 group-hover/msg:opacity-100 p-1.5 rounded-full bg-white/80 dark:bg-neutral-800/80 text-neutral-500 hover:text-[#06C755] transition-opacity shadow-sm self-center flex-shrink-0"
                     title="Reply"
                   >
-                    <Reply className="w-3.5 h-3.5" />
+                    <Reply className="w-3 h-3" />
                   </button>
                 )}
 
                 {/* Timestamp for OTHER */}
                 {!isMe && (
-                  <span className="text-[10px] text-neutral-600 dark:text-neutral-400 font-mono mb-1 select-none">
+                  <span className="text-[10px] text-neutral-600 dark:text-neutral-400 font-mono mb-1 select-none flex-shrink-0">
                     {formatMessageTime(msg.createdAt)}
                   </span>
                 )}
@@ -811,14 +810,14 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
 
       {/* 6. Quoted Reply Bar (Above Input) */}
       {replyingTo && (
-        <div className="px-4 py-2 bg-neutral-100/95 dark:bg-[#1A1C25]/95 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 animate-in slide-in-from-bottom-2 duration-150">
-          <div className="flex items-center gap-2.5 min-w-0 flex-1">
-            <div className="w-1 h-8 rounded-full bg-[#06C755] flex-shrink-0" />
+        <div className="px-3 sm:px-4 py-2 bg-neutral-100/95 dark:bg-[#1A1C25]/95 border-t border-black/[0.06] dark:border-white/[0.08] flex items-center justify-between z-20 animate-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="w-1 h-7 rounded-full bg-[#06C755] flex-shrink-0" />
             <div className="flex flex-col min-w-0 flex-1">
               <span className="text-[11px] font-bold text-[#06C755] truncate">
                 Replying to {replyingTo.sender.name}
               </span>
-              <span className="text-[11px] text-neutral-600 dark:text-neutral-400 truncate">
+              <span className="text-[10px] sm:text-[11px] text-neutral-600 dark:text-neutral-400 truncate">
                 {replyingTo.type === "STICKER"
                   ? "✨ [Sticker]"
                   : replyingTo.type === "IMAGE"
@@ -831,7 +830,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
           </div>
           <button
             onClick={() => setReplyingTo(null)}
-            className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 dark:hover:text-white"
+            className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 dark:hover:text-white flex-shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
@@ -839,18 +838,18 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
       )}
 
       {/* 7. Input Bar / Voice Recording HUD */}
-      <div className="p-3 sm:p-4 bg-white/90 dark:bg-[#181A22]/90 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-2 z-20 flex-shrink-0">
+      <div className="p-2 sm:p-3 bg-white/95 dark:bg-[#181A22]/95 backdrop-blur-md border-t border-black/[0.06] dark:border-white/[0.08] flex items-center gap-1 sm:gap-2 z-20 flex-shrink-0 max-w-full">
         {isRecording ? (
           /* Live Voice Recording UI */
-          <div className="flex-1 flex items-center justify-between px-4 py-2 rounded-2xl bg-red-500/10 border border-red-500/20 animate-pulse">
-            <div className="flex items-center gap-3">
-              <span className="w-3 h-3 rounded-full bg-red-500 animate-ping" />
-              <span className="text-xs font-mono font-bold text-red-600 dark:text-red-400">
-                Recording {formatRecordingTime(recordingDuration)}
+          <div className="flex-1 flex items-center justify-between px-3 py-1.5 rounded-2xl bg-red-500/10 border border-red-500/20 animate-pulse min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping flex-shrink-0" />
+              <span className="text-xs font-mono font-bold text-red-600 dark:text-red-400 truncate">
+                {formatRecordingTime(recordingDuration)}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 flex-shrink-0">
               <button
                 type="button"
                 onClick={cancelRecording}
@@ -862,11 +861,11 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               <button
                 type="button"
                 onClick={stopAndSendRecording}
-                className="px-4 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05B04B] text-white text-xs font-bold shadow-md shadow-[#06C755]/25 flex items-center gap-1.5 active:scale-95 transition-all"
+                className="px-3.5 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#05B04B] text-white text-xs font-bold shadow-md shadow-[#06C755]/25 flex items-center gap-1 active:scale-95 transition-all"
                 title="Send Voice Note"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Send VN</span>
+                <span>Send</span>
               </button>
             </div>
           </div>
@@ -877,7 +876,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             <button
               type="button"
               onClick={() => setIsStickerOpen((prev) => !prev)}
-              className={`p-2.5 rounded-2xl transition-colors ${
+              className={`p-2 rounded-xl transition-colors flex-shrink-0 ${
                 isStickerOpen
                   ? "bg-[#06C755] text-white"
                   : "text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06]"
@@ -894,7 +893,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                 setIsStickerOpen(false);
                 fileInputRef.current?.click();
               }}
-              className="p-2.5 rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors"
+              className="p-2 rounded-xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors flex-shrink-0"
               title="Send Photo from Device"
             >
               <ImageIcon className="w-5 h-5" />
@@ -904,25 +903,25 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             <button
               type="button"
               onClick={startRecording}
-              className="p-2.5 rounded-2xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors"
+              className="p-2 rounded-xl text-neutral-500 hover:text-[#06C755] hover:bg-neutral-100 dark:hover:bg-white/[0.06] transition-colors flex-shrink-0"
               title="Record Voice Note"
             >
               <Mic className="w-5 h-5" />
             </button>
 
             {/* Text Input Form */}
-            <form onSubmit={handleSendText} className="flex-1 flex items-center gap-2">
+            <form onSubmit={handleSendText} className="flex-1 flex items-center gap-1.5 min-w-0">
               <input
                 type="text"
-                placeholder="Type a message on Chaline (or paste image)..."
+                placeholder="Type a message on Chaline..."
                 value={inputContent}
                 onChange={(e) => setInputContent(e.target.value)}
-                className="flex-1 px-4 py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
+                className="flex-1 min-w-0 px-3.5 py-2 sm:px-4 sm:py-2.5 rounded-2xl bg-neutral-100 dark:bg-white/[0.05] border border-black/[0.04] dark:border-white/[0.06] text-xs text-neutral-900 dark:text-white placeholder-neutral-400 outline-none focus:border-[#06C755]/60 transition-colors"
               />
               <button
                 type="submit"
                 disabled={!inputContent.trim()}
-                className="p-2.5 rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all disabled:opacity-40 active:scale-95 flex-shrink-0"
+                className="p-2 sm:p-2.5 rounded-xl sm:rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white shadow-md shadow-[#06C755]/25 transition-all disabled:opacity-40 active:scale-95 flex-shrink-0"
                 title="Send"
               >
                 <Send className="w-4 h-4" />
