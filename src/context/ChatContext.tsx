@@ -437,16 +437,24 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          id: tempId,
           content: content.trim(),
           type,
           mediaUrl,
           replyToId,
         }),
       })
-        .then((res) => {
-          if (!res.ok) {
-            console.warn("Message failed to persist in DB");
+        .then(async (res) => {
+          if (res.ok) {
+            const data = await res.json();
+            const serverMsg = data.message;
+            if (serverMsg) {
+              sentMessageIdsRef.current.add(serverMsg.id);
+              setMessages((prev) =>
+                prev.map((m) => (m.id === tempId ? serverMsg : m))
+              );
+            }
+          } else {
+            console.warn("Message failed to persist in DB:", await res.text());
           }
         })
         .catch((err) => {

@@ -18,7 +18,6 @@ export async function GET(
     const [messages, conversation] = await Promise.all([
       prisma.message.findMany({
         where: { conversationId },
-        take: 50,
         include: {
           sender: {
             select: {
@@ -66,7 +65,7 @@ export async function GET(
       }),
     ]);
 
-    // Update lastReadAt asynchronously in background without blocking response
+    // Update lastReadAt for current user
     prisma.conversationParticipant
       .update({
         where: {
@@ -80,7 +79,7 @@ export async function GET(
       .catch(() => {});
 
     return NextResponse.json({
-      messages,
+      messages: messages || [],
       participants: conversation?.participants || [],
     });
   } catch (error) {
@@ -104,7 +103,7 @@ export async function POST(
 
     const { id: conversationId } = await params;
     const body = await req.json();
-    const { content, type = "TEXT", mediaUrl, replyToId, id: customId } = body;
+    const { content, type = "TEXT", mediaUrl, replyToId } = body;
 
     if (!content && !mediaUrl) {
       return NextResponse.json(
@@ -113,10 +112,21 @@ export async function POST(
       );
     }
 
-    // Direct single fast insert
+    // Safely check replyToId to avoid Foreign Key constraint errors
+    let validReplyToId: string | null = null;
+    if (replyToId && typeof replyToId === "string" && !replyToId.startsWith("temp_")) {
+      const parent = await prisma.message.findUnique({
+        where: { id: replyToId },
+        select: { id: true },
+      });
+      if (parent) {
+        validReplyToId = parent.id;
+      }
+    }
+
+    // Direct insert
     const newMessage = await prisma.message.create({
       data: {
-        ...(customId ? { id: customId } : {}),
         conversationId,
         senderId: session.userId,
         content:
@@ -128,7 +138,7 @@ export async function POST(
             : "[Image]"),
         type: type as "TEXT" | "STICKER" | "IMAGE" | "AUDIO",
         mediaUrl: mediaUrl || null,
-        replyToId: replyToId || null,
+        replyToId: validReplyToId,
       },
       include: {
         sender: {
@@ -157,7 +167,7 @@ export async function POST(
       },
     });
 
-    // Touch conversation & participant in background without blocking API response
+    // Touch conversation & participant
     Promise.all([
       prisma.conversation.update({
         where: { id: conversationId },
