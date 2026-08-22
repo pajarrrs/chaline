@@ -282,14 +282,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       channelRef.current = channel;
     }
 
-    // Gentle polling sync every 2 seconds + focus listener
-    const pollInterval = setInterval(() => {
-      refreshConversations();
-      if (activeConvIdRef.current) {
-        fetchActiveMessages(activeConvIdRef.current, false);
-      }
-    }, 2000);
-
+    // Auto-sync when user wakes up device / refocuses window tab
     const handleFocus = () => {
       if (document.visibilityState === "visible") {
         refreshConversations();
@@ -306,7 +299,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       if (channelRef.current && supabase) {
         supabase.removeChannel(channelRef.current);
       }
-      clearInterval(pollInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
     };
