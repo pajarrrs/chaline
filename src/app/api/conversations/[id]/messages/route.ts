@@ -14,58 +14,39 @@ export async function GET(
 
     const { id: conversationId } = await params;
 
-    // Fetch messages + participants in parallel
-    const [messages, conversation] = await Promise.all([
-      prisma.message.findMany({
-        where: { conversationId },
-        include: {
-          sender: {
-            select: {
-              id: true,
-              lineId: true,
-              name: true,
-              avatar: true,
-            },
+    // Single fast query for messages (ordered by creation)
+    const messages = await prisma.message.findMany({
+      where: { conversationId },
+      take: 60,
+      include: {
+        sender: {
+          select: {
+            id: true,
+            lineId: true,
+            name: true,
+            avatar: true,
           },
-          replyTo: {
-            select: {
-              id: true,
-              content: true,
-              type: true,
-              mediaUrl: true,
-              sender: {
-                select: {
-                  id: true,
-                  name: true,
-                  lineId: true,
-                },
+        },
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            type: true,
+            mediaUrl: true,
+            sender: {
+              select: {
+                id: true,
+                name: true,
+                lineId: true,
               },
             },
           },
         },
-        orderBy: { createdAt: "asc" },
-      }),
-      prisma.conversation.findUnique({
-        where: { id: conversationId },
-        include: {
-          participants: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  lineId: true,
-                  name: true,
-                  avatar: true,
-                  statusMessage: true,
-                },
-              },
-            },
-          },
-        },
-      }),
-    ]);
+      },
+      orderBy: { createdAt: "asc" },
+    });
 
-    // Update lastReadAt for current user
+    // Update lastReadAt asynchronously
     prisma.conversationParticipant
       .update({
         where: {
@@ -80,7 +61,6 @@ export async function GET(
 
     return NextResponse.json({
       messages: messages || [],
-      participants: conversation?.participants || [],
     });
   } catch (error) {
     console.error("Fetch Messages Error:", error);

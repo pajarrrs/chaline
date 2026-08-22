@@ -70,6 +70,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const currentUserIdRef = useRef<string | null>(null);
   const channelRef = useRef<any>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const messageCacheRef = useRef<Record<string, Message[]>>({});
 
   // Keep refs in sync
   useEffect(() => {
@@ -165,34 +166,27 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // Fetch Messages for active conversation
+  // Fetch Messages for active conversation with In-Memory Caching
   const fetchActiveMessages = useCallback(async (convId: string, showLoader = false) => {
-    if (showLoader) setLoadingMessages(true);
+    if (showLoader && !messageCacheRef.current[convId]) setLoadingMessages(true);
     try {
       const res = await fetch(`/api/conversations/${convId}/messages`);
       if (res.ok) {
         const data = await res.json();
         const newMessages: Message[] = data.messages || [];
 
-        setMessages((prev) => {
-          const pending = prev.filter((m) => m.id.startsWith("temp_"));
-          if (pending.length === 0) return newMessages;
+        // Save to cache
+        messageCacheRef.current[convId] = newMessages;
 
-          const serverIds = new Set(newMessages.map((m) => m.id));
-          const stillPending = pending.filter((p) => !serverIds.has(p.id));
-          return [...newMessages, ...stillPending];
-        });
+        if (activeConvIdRef.current === convId) {
+          setMessages((prev) => {
+            const pending = prev.filter((m) => m.id.startsWith("temp_"));
+            if (pending.length === 0) return newMessages;
 
-        // Initialize read receipt from participants if available
-        if (data.participants && Array.isArray(data.participants)) {
-          const other = data.participants.find((p: any) => p.userId !== currentUserIdRef.current);
-          if (other?.lastReadAt) {
-            const lastReadMs = new Date(other.lastReadAt).getTime();
-            setReadReceipts((prev) => ({
-              ...prev,
-              [convId]: Math.max(prev[convId] || 0, lastReadMs),
-            }));
-          }
+            const serverIds = new Set(newMessages.map((m) => m.id));
+            const stillPending = pending.filter((p) => !serverIds.has(p.id));
+            return [...newMessages, ...stillPending];
+          });
         }
       }
     } catch (e) {
@@ -215,18 +209,26 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       // 2. Clear typing status when message arrives
       setTypingUsers((prev) => ({ ...prev, [newMsg.conversationId]: false }));
 
-      // 3. If viewing this chat room, append directly to messages state (Instant 0 ms!)
+      // 3. Update memory cache
+      if (messageCacheRef.current[newMsg.conversationId]) {
+        const currentCached = messageCacheRef.current[newMsg.conversationId];
+        if (!currentCached.some((m) => m.id === newMsg.id)) {
+          messageCacheRef.current[newMsg.conversationId] = [...currentCached, newMsg];
+        }
+      }
+
+      // 4. If viewing this chat room, append directly to messages state (Instant 0 ms!)
       if (activeConvIdRef.current === newMsg.conversationId) {
         setMessages((prev) => {
           if (prev.some((m) => m.id === newMsg.id)) return prev;
           return [...prev, newMsg];
         });
 
-        // If I am currently viewing this room, broadcast read receipt back to sender instantly!
+        // Broadcast read receipt back to sender instantly
         broadcastReadStatus(newMsg.conversationId);
       }
 
-      // 4. Play sound & browser notification for incoming message
+      // 5. Play sound & browser notification for incoming message
       playNotificationSound();
       showBrowserNotification(`Chaline • ${newMsg.sender?.name || "Friend"}`, {
         body:
@@ -240,7 +242,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         icon: newMsg.sender?.avatar || "/icons/icon-192x192.png",
       });
 
-      // 5. Update conversations list state in memory without hitting GET API
+      // 6. Update conversations list state in memory without hitting GET API
       setConversations((prev) => {
         const isCurrentOpen = activeConvIdRef.current === newMsg.conversationId;
         const exists = prev.some((c) => c.id === newMsg.conversationId);
@@ -322,7 +324,6 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
             [conversationId]: Math.max(prev[conversationId] || 0, readAt),
           }));
 
-          // Also update active conversation participant lastReadAt in state
           setActiveConversation((prev) => {
             if (!prev || prev.id !== conversationId) return prev;
             return {
@@ -384,6 +385,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     };
   }, [user, refreshConversations, refreshFriends, handleRealtimeIncomingMessage]);
 
+  // Instant Room Selection (0 ms from Memory Cache)
   const selectConversation = (conv: Conversation | null) => {
     setActiveConversation(conv);
     activeConvIdRef.current = conv?.id || null;
@@ -391,13 +393,23 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       setMessages([]);
       return;
     }
-    // Fetch initial chat history ONCE
+
+    // 1. Instant Cache Render (0 ms!): If cached, load immediately
+    if (messageCacheRef.current[conv.id]) {
+      setMessages(messageCacheRef.current[conv.id]);
+    } else if (conv.lastMessage) {
+      setMessages([conv.lastMessage]);
+    } else {
+      setMessages([]);
+    }
+
+    // 2. Fetch fresh history in background
     fetchActiveMessages(conv.id, false);
 
-    // Broadcast that I have read this conversation
+    // 3. Broadcast read status
     broadcastReadStatus(conv.id);
 
-    // Mark as read in local state
+    // 4. Mark as read in local state
     setConversations((prev) =>
       prev.map((c) => (c.id === conv.id ? { ...c, unreadCount: 0 } : c))
     );
@@ -472,6 +484,14 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
 
       setMessages((prev) => [...prev, tempMessage]);
 
+      // Update memory cache
+      if (messageCacheRef.current[activeConversation.id]) {
+        messageCacheRef.current[activeConversation.id] = [
+          ...messageCacheRef.current[activeConversation.id],
+          tempMessage,
+        ];
+      }
+
       // Update local conversations last message snippet immediately
       setConversations((prev) =>
         prev
@@ -515,6 +535,13 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               setMessages((prev) =>
                 prev.map((m) => (m.id === tempId ? serverMsg : m))
               );
+              // Update cache with server message
+              if (messageCacheRef.current[activeConversation.id]) {
+                messageCacheRef.current[activeConversation.id] =
+                  messageCacheRef.current[activeConversation.id].map((m) =>
+                    m.id === tempId ? serverMsg : m
+                  );
+              }
             }
           } else {
             console.warn("Message failed to persist in DB:", await res.text());
