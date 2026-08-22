@@ -52,10 +52,45 @@ const ChatContext = createContext<ChatContextType | undefined>(undefined);
 export function ChatProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<"chats" | "friends">("chats");
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [friends, setFriends] = useState<Friend[]>([]);
-  const [loadingConversations, setLoadingConversations] = useState(true);
-  const [loadingFriends, setLoadingFriends] = useState(true);
+  const [conversations, setConversations] = useState<Conversation[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("chaline_cache_convs");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+
+  const [friends, setFriends] = useState<Friend[]>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("chaline_cache_friends");
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) return parsed;
+        }
+      } catch {}
+    }
+    return [];
+  });
+
+  const [loadingConversations, setLoadingConversations] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("chaline_cache_convs");
+    }
+    return true;
+  });
+
+  const [loadingFriends, setLoadingFriends] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("chaline_cache_friends");
+    }
+    return true;
+  });
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);

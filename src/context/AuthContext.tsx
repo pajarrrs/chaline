@@ -15,8 +15,24 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Initialize user instantly from localStorage cache on frame 0
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const cached = localStorage.getItem("chaline_user");
+        if (cached) return JSON.parse(cached);
+      } catch {}
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("chaline_user");
+    }
+    return true;
+  });
+
   const router = useRouter();
   const pathname = usePathname();
 
@@ -25,12 +41,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch("/api/auth/me");
       if (res.ok) {
         const data = await res.json();
-        setUser(data.user);
+        if (data.user) {
+          setUser(data.user);
+          try {
+            localStorage.setItem("chaline_user", JSON.stringify(data.user));
+          } catch {}
+        } else {
+          setUser(null);
+          try {
+            localStorage.removeItem("chaline_user");
+          } catch {}
+        }
       } else {
         setUser(null);
+        try {
+          localStorage.removeItem("chaline_user");
+        } catch {}
       }
     } catch {
-      setUser(null);
+      // Keep cached user on offline/temporary network blip
     } finally {
       setLoading(false);
     }
@@ -54,11 +83,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = (userData: User) => {
     setUser(userData);
+    try {
+      localStorage.setItem("chaline_user", JSON.stringify(userData));
+    } catch {}
     router.push("/");
   };
 
   const logout = async () => {
     try {
+      localStorage.removeItem("chaline_user");
+      localStorage.removeItem("chaline_cache_convs");
+      localStorage.removeItem("chaline_cache_friends");
       await fetch("/api/auth/logout", { method: "POST" });
     } finally {
       setUser(null);
