@@ -277,7 +277,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
     document.addEventListener("visibilitychange", handleFocus);
 
     return () => {
-      supabase.removeChannel(channel);
+      supabase?.removeChannel(channel);
       clearInterval(fallbackInterval);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleFocus);
