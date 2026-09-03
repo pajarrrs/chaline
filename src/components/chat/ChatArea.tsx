@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
+import { useCall } from "@/context/CallContext";
 import { StickerPicker } from "./StickerPicker";
 import { Message } from "@/types/line";
 
@@ -177,6 +178,7 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
     sendTypingStatus,
     readReceipts,
   } = useChat();
+  const { startCall } = useCall();
 
   const [inputContent, setInputContent] = useState("");
   const [isStickerOpen, setIsStickerOpen] = useState(false);
@@ -501,14 +503,38 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
         {/* Header Actions */}
         <div className="flex items-center gap-0.5 sm:gap-1.5 text-neutral-500 dark:text-neutral-400 flex-shrink-0">
           <button
-            onClick={() => alert("Chaline Voice Call feature coming soon!")}
+            onClick={() => {
+              if (otherUser) {
+                startCall(
+                  {
+                    id: otherUser.id,
+                    name: otherUser.name,
+                    lineId: otherUser.lineId,
+                    avatar: otherUser.avatar,
+                  },
+                  false
+                );
+              }
+            }}
             className="p-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.06] hover:text-[#06C755] transition-colors"
             title="Voice Call"
           >
             <Phone className="w-4 h-4" />
           </button>
           <button
-            onClick={() => alert("Chaline Video Call feature coming soon!")}
+            onClick={() => {
+              if (otherUser) {
+                startCall(
+                  {
+                    id: otherUser.id,
+                    name: otherUser.name,
+                    lineId: otherUser.lineId,
+                    avatar: otherUser.avatar,
+                  },
+                  true
+                );
+              }
+            }}
             className="p-2 rounded-xl hover:bg-neutral-100 dark:hover:bg-white/[0.06] hover:text-[#06C755] transition-colors"
             title="Video Call"
           >

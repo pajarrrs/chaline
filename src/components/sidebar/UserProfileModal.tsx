@@ -1,9 +1,10 @@
 "use client";
 
 import React from "react";
-import { X, MessageSquare, Sparkles, User as UserIcon } from "lucide-react";
+import { X, MessageSquare, Sparkles, User as UserIcon, Video } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useChat } from "@/context/ChatContext";
+import { useCall } from "@/context/CallContext";
 
 export function UserProfileModal() {
   const { user: currentUser } = useAuth();
@@ -12,6 +13,7 @@ export function UserProfileModal() {
     setProfileModalUser,
     startChatWithFriend,
   } = useChat();
+  const { startCall } = useCall();
 
   if (!profileModalUser) return null;
 
@@ -20,6 +22,21 @@ export function UserProfileModal() {
   const handleStartChat = () => {
     startChatWithFriend(profileModalUser);
     setProfileModalUser(null);
+  };
+
+  const handleVideoCall = () => {
+    if (profileModalUser) {
+      startCall(
+        {
+          id: profileModalUser.id,
+          name: profileModalUser.name,
+          lineId: profileModalUser.lineId,
+          avatar: profileModalUser.avatar,
+        },
+        true
+      );
+      setProfileModalUser(null);
+    }
   };
 
   return (
@@ -66,13 +83,22 @@ export function UserProfileModal() {
           </div>
 
           {!isSelf && (
-            <button
-              onClick={handleStartChat}
-              className="w-full mt-2 py-3 px-4 rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white font-bold text-xs shadow-lg shadow-[#06C755]/25 active:scale-95 transition-all flex items-center justify-center gap-2"
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span>Chat on Chaline</span>
-            </button>
+            <div className="w-full flex gap-2 mt-2">
+              <button
+                onClick={handleStartChat}
+                className="flex-1 py-3 px-4 rounded-2xl bg-[#06C755] hover:bg-[#05B04B] text-white font-bold text-xs shadow-lg shadow-[#06C755]/25 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <MessageSquare className="w-4 h-4" />
+                <span>Chat</span>
+              </button>
+              <button
+                onClick={handleVideoCall}
+                className="flex-1 py-3 px-4 rounded-2xl bg-neutral-900 dark:bg-white/10 hover:bg-neutral-800 dark:hover:bg-white/20 text-white font-bold text-xs border border-white/10 active:scale-95 transition-all flex items-center justify-center gap-2"
+              >
+                <Video className="w-4 h-4 text-[#06C755]" />
+                <span>Video Call</span>
+              </button>
+            </div>
           )}
         </div>
       </div>

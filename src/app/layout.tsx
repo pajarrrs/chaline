@@ -4,6 +4,8 @@ import Script from "next/script";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { AuthProvider } from "@/context/AuthContext";
 import { ChatProvider } from "@/context/ChatContext";
+import { CallProvider } from "@/context/CallContext";
+import { CallModal } from "@/components/call/CallModal";
 import "./globals.css";
 
 const plusJakartaSans = Plus_Jakarta_Sans({
@@ -54,7 +56,12 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <AuthProvider>
-            <ChatProvider>{children}</ChatProvider>
+            <ChatProvider>
+              <CallProvider>
+                {children}
+                <CallModal />
+              </CallProvider>
+            </ChatProvider>
           </AuthProvider>
         </ThemeProvider>
         <Script
