@@ -174,18 +174,7 @@ export async function showBrowserNotification(
     requireInteraction: options?.requireInteraction ?? false,
   };
 
-  // 1. Android Mobile Chrome & PWA: Requires ServiceWorkerRegistration.showNotification()!
-  if ("serviceWorker" in navigator) {
-    try {
-      const reg = await navigator.serviceWorker.ready;
-      if (reg && typeof reg.showNotification === "function") {
-        await reg.showNotification(title, notifOptions);
-        return null;
-      }
-    } catch {}
-  }
-
-  // 2. Desktop Browser fallback (Windows / Mac)
+  // 1. Try Desktop Notification constructor first (instant, works in Incognito and regular tabs)
   try {
     const notif = new Notification(title, notifOptions);
     notif.onclick = () => {
@@ -193,9 +182,23 @@ export async function showBrowserNotification(
       notif.close();
     };
     return notif;
-  } catch {
-    return null;
+  } catch (desktopErr) {
+    // 2. Fallback to ServiceWorker (e.g. Android Mobile Chrome where new Notification() throws)
+    if ("serviceWorker" in navigator) {
+      try {
+        const reg = await Promise.race([
+          navigator.serviceWorker.ready,
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), 800)),
+        ]);
+        if (reg && typeof reg.showNotification === "function") {
+          await reg.showNotification(title, notifOptions);
+        }
+      } catch (swErr) {
+        console.warn("[Notification] ServiceWorker fallback error:", swErr);
+      }
+    }
   }
+  return null;
 }
 
 // Close an active notification by tag

@@ -45,6 +45,8 @@ interface ChatContextType {
   sendTypingStatus: (isTyping: boolean) => void;
   readReceipts: Record<string, number>; // convId -> timestamp of other user's read
   broadcastReadStatus: (convId: string) => void;
+  sendCallSignal: (payload: any) => Promise<boolean>;
+  registerCallSignalListener: (listener: (payload: any) => void) => () => void;
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -99,6 +101,7 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
   const channelRef = useRef<any>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const messageCacheRef = useRef<Record<string, Message[]>>({});
+  const callSignalListenerRef = useRef<((payload: any) => void) | null>(null);
 
   // Keep refs in sync
   useEffect(() => {
@@ -159,6 +162,34 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
       });
     },
     [user]
+  );
+
+  // Broadcast WebRTC call signal over active global WebSocket channel
+  const sendCallSignal = useCallback(async (payload: any): Promise<boolean> => {
+    if (!channelRef.current) {
+      console.warn("[Realtime Global] WebSocket channel not ready for call signal");
+      return false;
+    }
+    const result = await channelRef.current.send({
+      type: "broadcast",
+      event: "call_signal",
+      payload,
+    });
+    console.log("[Realtime Global] Broadcasted call_signal:", payload?.type, "result:", result);
+    return result === "ok";
+  }, []);
+
+  // Register listener for incoming call signals
+  const registerCallSignalListener = useCallback(
+    (listener: (payload: any) => void) => {
+      callSignalListenerRef.current = listener;
+      return () => {
+        if (callSignalListenerRef.current === listener) {
+          callSignalListenerRef.current = null;
+        }
+      };
+    },
+    []
   );
 
   // Fetch Conversations (Initial Load & Tab Focus)
@@ -392,6 +423,15 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
               ),
             };
           });
+        }
+      });
+
+      // 4. Video / Voice Call signaling broadcasts
+      channel.on("broadcast", { event: "call_signal" }, (rawPayload) => {
+        const signalData = rawPayload?.payload || rawPayload;
+        console.log("[ChatContext] Received call_signal broadcast:", signalData);
+        if (callSignalListenerRef.current && signalData) {
+          callSignalListenerRef.current(signalData);
         }
       });
 
@@ -684,6 +724,8 @@ export function ChatProvider({ children }: { children: React.ReactNode }) {
         sendTypingStatus,
         readReceipts,
         broadcastReadStatus,
+        sendCallSignal,
+        registerCallSignalListener,
       }}
     >
       {children}

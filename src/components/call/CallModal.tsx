@@ -12,6 +12,7 @@ import {
   MonitorUp,
   Maximize2,
   Minimize2,
+  Loader2,
 } from "lucide-react";
 
 export function CallModal() {
@@ -42,6 +43,7 @@ export function CallModal() {
   const miniLocalVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
+  const [isRemoteVideoPlaying, setIsRemoteVideoPlaying] = useState(false);
 
   // Attach local stream
   useEffect(() => {
@@ -414,13 +416,24 @@ export function CallModal() {
             ref={remoteVideoRef}
             autoPlay
             playsInline
+            onLoadedMetadata={() => {
+              if (remoteVideoRef.current && remoteVideoRef.current.videoWidth > 0) {
+                setIsRemoteVideoPlaying(true);
+              }
+            }}
+            onPlaying={() => setIsRemoteVideoPlaying(true)}
+            onWaiting={() => setIsRemoteVideoPlaying(false)}
+            onPause={() => setIsRemoteVideoPlaying(false)}
+            onEnded={() => setIsRemoteVideoPlaying(false)}
             className={`w-full h-full object-cover transition-opacity duration-300 ${
-              hasRemoteVideo ? "opacity-100" : "opacity-0 absolute inset-0 pointer-events-none"
+              isRemoteVideoPlaying
+                ? "opacity-100"
+                : "opacity-0 absolute inset-0 pointer-events-none"
             }`}
           />
 
-          {/* Avatar Fallback Card when remote camera is off or audio-only */}
-          {!hasRemoteVideo && (
+          {/* Avatar Fallback Card when remote video has not arrived or camera is off */}
+          {!isRemoteVideoPlaying && (
             <div className="flex flex-col items-center gap-4 text-center p-6 z-10 animate-in fade-in duration-300">
               <div className="relative">
                 <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full overflow-hidden ring-4 ring-[#06C755]/50 bg-neutral-900 shadow-2xl">
@@ -434,15 +447,21 @@ export function CallModal() {
                     className="w-full h-full object-cover"
                   />
                 </div>
-                <div className="absolute -bottom-2 inset-x-0 flex justify-center">
-                  <span className="px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-bold text-neutral-300">
-                    Camera Off / Audio Active
+                <div className="absolute -bottom-3 inset-x-0 flex justify-center">
+                  <span className="px-3 py-1 rounded-full bg-black/80 backdrop-blur-md border border-white/15 text-[10px] font-bold text-neutral-200 flex items-center gap-1.5 shadow-lg">
+                    <Loader2 className="w-3 h-3 text-[#06C755] animate-spin" />
+                    Menghubungkan video...
                   </span>
                 </div>
               </div>
-              <span className="text-sm font-semibold text-neutral-200">
-                Connected with {otherPerson?.name}
-              </span>
+              <div className="flex flex-col items-center mt-2">
+                <span className="text-base font-bold text-white drop-shadow">
+                  {otherPerson?.name}
+                </span>
+                <span className="text-xs text-neutral-400 mt-0.5">
+                  Audio terhubung • Menunggu video
+                </span>
+              </div>
             </div>
           )}
 

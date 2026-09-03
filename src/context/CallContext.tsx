@@ -9,7 +9,7 @@ import React, {
   useCallback,
 } from "react";
 import { useAuth } from "./AuthContext";
-import { supabase } from "@/lib/supabase";
+import { useChat } from "./ChatContext";
 import { CallStatus, CallUser, CallSignalData } from "@/types/call";
 import {
   playIncomingRingtone,
@@ -61,6 +61,7 @@ const RTC_CONFIG: RTCConfiguration = {
 
 export function CallProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
+  const { sendCallSignal, registerCallSignalListener } = useChat();
 
   const [callStatus, setCallStatus] = useState<CallStatus>("idle");
   const [callId, setCallId] = useState<string | null>(null);
@@ -86,7 +87,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const queuedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
-  const channelRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
@@ -121,16 +121,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     localStreamRef.current = localStream;
   }, [localStream]);
 
-  // Broadcast signal over persistent calls channel
-  const broadcastSignal = useCallback((payload: CallSignalData) => {
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "call_signal",
-        payload,
-      });
-    }
-  }, []);
+  // Broadcast signal over shared global WebSocket channel (chaline-realtime-global)
+  const broadcastSignal = useCallback(
+    async (payload: CallSignalData) => {
+      await sendCallSignal(payload);
+    },
+    [sendCallSignal]
+  );
 
   // Flush queued ICE candidates after setRemoteDescription
   const flushQueuedCandidates = async (pc: RTCPeerConnection) => {
@@ -266,7 +263,10 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   // Request camera and microphone media streams
   const acquireMediaStream = async (videoRequired: boolean): Promise<MediaStream | null> => {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      alert("Camera/microphone is not supported or site is not on a secure context (localhost or HTTPS).");
+      alert(
+        "Kamera/mikrofon tidak didukung atau browser tidak berjalan di konteks aman (HTTPS atau localhost).\n\n" +
+        "Catatan untuk iPhone/HP: Safari/Chrome di HP memerlukan koneksi HTTPS (misal via ngrok/Cloudflare tunnel) atau instal sebagai PWA agar izin kamera dapat dibuka."
+      );
       return null;
     }
 
@@ -356,8 +356,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       // Handle remote media track arrival
       pc.ontrack = (event) => {
+        console.log("[WebRTC] ontrack received:", event.track.kind, event.streams);
         if (event.streams && event.streams[0]) {
           setRemoteStream(event.streams[0]);
+        } else {
+          setRemoteStream((prev) => {
+            const stream = prev || new MediaStream();
+            stream.addTrack(event.track);
+            return stream;
+          });
         }
       };
 
@@ -394,175 +401,178 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       return pc;
     },
-    [user, broadcastSignal, cleanupMediaAndPeer]
+    [user, sendCallSignal, cleanupMediaAndPeer]
   );
 
-  // Single Persistent Supabase Realtime Channel for all call signaling
-  useEffect(() => {
-    if (!user || !supabase) return;
+  const handleCallSignalRef = useRef<((data: CallSignalData) => Promise<void>) | null>(null);
 
-    const channel = supabase.channel("chaline-realtime-calls", {
-      config: { broadcast: { self: false } },
-    });
+  handleCallSignalRef.current = async (data: CallSignalData) => {
+    if (!data || !user) return;
+    if (data.targetUserId !== user.id) return;
+    console.log("[CallContext] Handling call_signal for me:", data.type, data);
 
-    channel.on("broadcast", { event: "call_signal" }, async (payload) => {
-      const data = payload?.payload as CallSignalData;
-      if (!data || data.targetUserId !== user.id) return;
-
-      // 1. Incoming Call Invitation
-      if (data.type === "call_invite") {
-        // If user is busy with another call, reply busy immediately
-        if (callStatusRef.current !== "idle") {
-          broadcastSignal({
-            type: "call_response",
-            callId: data.callId,
-            targetUserId: data.caller.id,
-            senderId: user.id,
-            accepted: false,
-            reason: "busy",
-          });
-          return;
-        }
-
-        setCallId(data.callId);
-        setCaller(data.caller);
-        setIsVideo(data.isVideo);
-        setCallStatus("incoming");
-        startIncomingCallAlert(data.caller, data.isVideo, data.callId);
+    // 1. Incoming Call Invitation
+    if (data.type === "call_invite") {
+      if (callStatusRef.current !== "idle") {
+        sendCallSignal({
+          type: "call_response",
+          callId: data.callId,
+          targetUserId: data.caller.id,
+          senderId: user.id,
+          accepted: false,
+          reason: "busy",
+        });
+        return;
       }
 
-      // 2. Call Response (Accepted / Declined)
-      else if (data.type === "call_response") {
-        if (data.callId !== callIdRef.current) return;
+      setCallId(data.callId);
+      setCaller(data.caller);
+      setIsVideo(data.isVideo);
+      setCallStatus("incoming");
+      startIncomingCallAlert(data.caller, data.isVideo, data.callId);
+    }
 
-        if (data.accepted) {
-          stopAllCallSounds();
+    // 2. Call Response (Accepted / Declined)
+    else if (data.type === "call_response") {
+      if (data.callId !== callIdRef.current) return;
 
-          if (callTimeoutRef.current) {
-            clearTimeout(callTimeoutRef.current);
-            callTimeoutRef.current = null;
-          }
+      if (data.accepted) {
+        stopIncomingCallAlert(data.callId);
+        setCallStatus("connected");
 
-          // Peer accepted -> create and send SDP offer
-          const pc = peerConnectionRef.current;
-          if (pc && targetUserRef.current) {
-            try {
-              const offer = await pc.createOffer();
-              await pc.setLocalDescription(offer);
-
-              broadcastSignal({
-                type: "call_sdp",
-                callId: data.callId,
-                targetUserId: targetUserRef.current.id,
-                senderId: user.id,
-                sdp: offer,
-              });
-            } catch (e) {
-              console.error("Failed creating SDP offer:", e);
-            }
-          }
-        } else {
-          // Call was declined or cancelled or busy
-          stopAllCallSounds();
-          playCallEndTone();
-          setCallStatus("ended");
-          setTimeout(() => {
-            cleanupMediaAndPeer();
-            setCallStatus("idle");
-            setCallId(null);
-            setCaller(null);
-            setTargetUser(null);
-          }, 1500);
+        if (callTimeoutRef.current) {
+          clearTimeout(callTimeoutRef.current);
+          callTimeoutRef.current = null;
         }
-      }
 
-      // 3. WebRTC SDP (Offer / Answer)
-      else if (data.type === "call_sdp") {
-        if (data.callId !== callIdRef.current) return;
+        if (!timerRef.current) {
+          timerRef.current = setInterval(() => {
+            setCallDuration((prev) => prev + 1);
+          }, 1000);
+        }
+
         const pc = peerConnectionRef.current;
-        if (!pc || !data.sdp) return;
+        if (pc && targetUserRef.current) {
+          try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
 
-        try {
-          if (data.sdp.type === "offer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            await flushQueuedCandidates(pc);
-
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-
-            broadcastSignal({
+            sendCallSignal({
               type: "call_sdp",
               callId: data.callId,
-              targetUserId: data.senderId,
+              targetUserId: targetUserRef.current.id,
               senderId: user.id,
-              sdp: answer,
+              sdp: offer,
             });
-          } else if (data.sdp.type === "answer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
-            await flushQueuedCandidates(pc);
-          }
-        } catch (e) {
-          console.error("Error setting remote description:", e);
-        }
-      }
-
-      // 4. WebRTC ICE Candidate
-      else if (data.type === "call_candidate") {
-        if (data.callId !== callIdRef.current) return;
-        const pc = peerConnectionRef.current;
-        if (pc && pc.remoteDescription && pc.remoteDescription.type) {
-          try {
-            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
           } catch (e) {
-            console.warn("Failed adding ICE candidate directly:", e);
+            console.error("Failed creating SDP offer:", e);
           }
-        } else {
-          queuedCandidatesRef.current.push(data.candidate);
         }
-      }
-
-      // 5. Call Hangup / Terminate by peer
-      else if (data.type === "call_end") {
-        if (data.callId !== callIdRef.current) return;
-        const wasIncoming = callStatusRef.current === "incoming";
-        const incomingCaller = callerRef.current;
-
+      } else {
         stopIncomingCallAlert(data.callId);
         playCallEndTone();
         setCallStatus("ended");
-
-        // If receiver never answered (missed call), show missed call notification
-        if (wasIncoming && incomingCaller) {
-          showBrowserNotification("📞 Missed Call", {
-            body: `You missed a call from ${incomingCaller.name}.`,
-            icon: incomingCaller.avatar || "/icons/icon-192x192.png",
-            tag: `missed-${data.callId}`,
-          });
-        }
-
         setTimeout(() => {
           cleanupMediaAndPeer();
           setCallStatus("idle");
           setCallId(null);
           setCaller(null);
           setTargetUser(null);
-        }, 1200);
+        }, 1500);
+      }
+    }
+
+    // 3. WebRTC SDP (Offer / Answer)
+    else if (data.type === "call_sdp") {
+      if (data.callId !== callIdRef.current) return;
+      const pc = peerConnectionRef.current;
+      if (!pc || !data.sdp) return;
+
+      try {
+        if (data.sdp.type === "offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          await flushQueuedCandidates(pc);
+
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+
+          sendCallSignal({
+            type: "call_sdp",
+            callId: data.callId,
+            targetUserId: data.senderId,
+            senderId: user.id,
+            sdp: answer,
+          });
+        } else if (data.sdp.type === "answer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+          await flushQueuedCandidates(pc);
+        }
+      } catch (e) {
+        console.error("Error setting remote description:", e);
+      }
+    }
+
+    // 4. WebRTC ICE Candidate
+    else if (data.type === "call_candidate") {
+      if (data.callId !== callIdRef.current) return;
+      const pc = peerConnectionRef.current;
+      if (pc && pc.remoteDescription && pc.remoteDescription.type) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.warn("Failed adding ICE candidate directly:", e);
+        }
+      } else {
+        queuedCandidatesRef.current.push(data.candidate);
+      }
+    }
+
+    // 5. Call Hangup / Terminate by peer
+    else if (data.type === "call_end") {
+      if (data.callId !== callIdRef.current) return;
+      const wasIncoming = callStatusRef.current === "incoming";
+      const incomingCaller = callerRef.current;
+
+      stopIncomingCallAlert(data.callId);
+      playCallEndTone();
+      setCallStatus("ended");
+
+      if (wasIncoming && incomingCaller) {
+        showBrowserNotification("📞 Missed Call", {
+          body: `You missed a call from ${incomingCaller.name}.`,
+          icon: incomingCaller.avatar || "/icons/icon-192x192.png",
+          tag: `missed-${data.callId}`,
+        });
+      }
+
+      setTimeout(() => {
+        cleanupMediaAndPeer();
+        setCallStatus("idle");
+        setCallId(null);
+        setCaller(null);
+        setTargetUser(null);
+      }, 1200);
+    }
+  };
+
+  // Stable listener registration
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = registerCallSignalListener(async (data: CallSignalData) => {
+      if (handleCallSignalRef.current) {
+        await handleCallSignalRef.current(data);
       }
     });
 
-    channel.subscribe();
-    channelRef.current = channel;
-
     return () => {
-      if (supabase && channelRef.current) {
-        supabase.removeChannel(channelRef.current);
-      }
+      unsubscribe();
     };
-  }, [user, broadcastSignal, cleanupMediaAndPeer]);
+  }, [user?.id, registerCallSignalListener]);
 
   // Initiate an outgoing call
   const startCall = async (target: CallUser, videoMode = true) => {
-    if (!user || !supabase) {
+    if (!user) {
       alert("Unable to initiate call: Service unavailable");
       return;
     }
@@ -639,6 +649,12 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
     stopIncomingCallAlert(currentCallId);
     setCallStatus("connected");
+
+    if (!timerRef.current) {
+      timerRef.current = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    }
 
     // 1. Acquire camera and mic
     const stream = await acquireMediaStream(isVideoRef.current);
