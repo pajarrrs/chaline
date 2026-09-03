@@ -6,7 +6,6 @@ const ASSETS_TO_CACHE = [
   "/manifest.json",
   "/icons/icon-192x192.png",
   "/icons/icon-512x512.png",
-  "/sound/notification.mp3",
 ];
 
 self.addEventListener("install", (event) => {
@@ -46,6 +45,25 @@ self.addEventListener("fetch", (event) => {
       })
       .catch(() => {
         return caches.match(event.request);
+      })
+  );
+});
+
+// Handle notification click to bring window into focus
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if ("focus" in client) {
+            return client.focus();
+          }
+        }
+        if (self.clients.openWindow) {
+          return self.clients.openWindow("/");
+        }
       })
   );
 });

@@ -29,20 +29,29 @@ export type CallSignalData =
   | {
       type: "call_response";
       callId: string;
-      fromUserId: string;
+      targetUserId: string;
+      senderId: string;
       accepted: boolean;
-      reason?: "declined" | "busy" | "timeout";
+      reason?: "declined" | "busy" | "timeout" | "cancelled";
     }
   | {
-      type: "call_webrtc_signal";
+      type: "call_sdp";
       callId: string;
+      targetUserId: string;
       senderId: string;
-      sdp?: RTCSessionDescriptionInit;
-      candidate?: RTCIceCandidateInit;
+      sdp: RTCSessionDescriptionInit;
+    }
+  | {
+      type: "call_candidate";
+      callId: string;
+      targetUserId: string;
+      senderId: string;
+      candidate: RTCIceCandidateInit;
     }
   | {
       type: "call_end";
       callId: string;
+      targetUserId: string;
       senderId: string;
       reason?: string;
     };

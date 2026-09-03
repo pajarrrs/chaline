@@ -22,11 +22,12 @@ export function FriendsList() {
   const isDark = resolvedTheme === "dark";
 
   const filteredFriends = friends.filter((f) => {
+    if (!f || !f.friend) return false;
     const q = search.toLowerCase();
     return (
-      f.friend.name.toLowerCase().includes(q) ||
-      f.friend.lineId.toLowerCase().includes(q) ||
-      f.friend.statusMessage?.toLowerCase().includes(q)
+      (f.friend.name || "").toLowerCase().includes(q) ||
+      (f.friend.lineId || "").toLowerCase().includes(q) ||
+      (f.friend.statusMessage || "").toLowerCase().includes(q)
     );
   });
 
@@ -91,22 +92,22 @@ export function FriendsList() {
             <div className="w-12 h-12 rounded-full overflow-hidden ring-2 ring-[#06C755] flex-shrink-0">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={user.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Me"}
-                alt={user.name}
+                src={user?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Me"}
+                alt={user?.name || "Me"}
                 className="w-full h-full object-cover"
               />
             </div>
             <div className="flex flex-col min-w-0 flex-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
-                  {user.name}
+                  {user?.name}
                 </span>
                 <span className="text-[10px] text-neutral-400 font-mono">
-                  @{user.lineId}
+                  @{user?.lineId}
                 </span>
               </div>
               <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate mt-0.5">
-                {user.statusMessage || "Available on Chaline"}
+                {user?.statusMessage || "Available on Chaline"}
               </span>
             </div>
           </div>
@@ -146,27 +147,27 @@ export function FriendsList() {
                   <div className="relative w-11 h-11 rounded-full flex-shrink-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={f.friend.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
-                      alt={f.friend.name}
+                      src={f.friend?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
+                      alt={f.friend?.name || "Friend"}
                       className="w-full h-full object-cover rounded-full ring-1 ring-black/[0.08] dark:ring-white/[0.1]"
                     />
                     <span
                       className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full ring-2 ring-white dark:ring-[#181A22] ${
-                        onlineUserIds.includes(f.friend.id) ? "bg-[#06C755]" : "bg-neutral-400"
+                        f.friend && onlineUserIds.includes(f.friend.id) ? "bg-[#06C755]" : "bg-neutral-400"
                       }`}
                     />
                   </div>
                   <div className="flex flex-col min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-bold text-neutral-900 dark:text-white truncate">
-                        {f.friend.name}
+                        {f.friend?.name}
                       </span>
-                      {onlineUserIds.includes(f.friend.id) && (
+                      {f.friend && onlineUserIds.includes(f.friend.id) && (
                         <span className="text-[9px] font-bold text-[#06C755]">● Online</span>
                       )}
                     </div>
                     <span className="text-[11px] text-neutral-500 dark:text-neutral-400 truncate">
-                      {f.friend.statusMessage || "Available on Chaline"}
+                      {f.friend?.statusMessage || "Available on Chaline"}
                     </span>
                   </div>
                 </div>

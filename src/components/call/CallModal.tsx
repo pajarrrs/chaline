@@ -12,8 +12,6 @@ import {
   MonitorUp,
   Maximize2,
   Minimize2,
-  X,
-  Volume2,
 } from "lucide-react";
 
 export function CallModal() {
@@ -43,39 +41,66 @@ export function CallModal() {
   const miniRemoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const miniLocalVideoRef = useRef<HTMLVideoElement | null>(null);
 
-  const [hasRemoteVideoTrack, setHasRemoteVideoTrack] = useState(false);
+  const [hasRemoteVideo, setHasRemoteVideo] = useState(false);
 
   // Attach local stream
   useEffect(() => {
     if (localVideoRef.current && localStream) {
       localVideoRef.current.srcObject = localStream;
+      localVideoRef.current.play().catch(() => {});
     }
     if (miniLocalVideoRef.current && localStream) {
       miniLocalVideoRef.current.srcObject = localStream;
+      miniLocalVideoRef.current.play().catch(() => {});
     }
-  }, [localStream, callStatus, isMinimized]);
+  }, [localStream, callStatus, isMinimized, isVideoOff]);
 
-  // Attach remote stream
+  // Attach remote stream & detect remote video track state
   useEffect(() => {
-    if (remoteVideoRef.current && remoteStream) {
-      remoteVideoRef.current.srcObject = remoteStream;
-      const vTracks = remoteStream.getVideoTracks();
-      setHasRemoteVideoTrack(vTracks.length > 0 && vTracks[0].enabled);
-    }
-    if (miniRemoteVideoRef.current && remoteStream) {
-      miniRemoteVideoRef.current.srcObject = remoteStream;
-    }
+    const bindRemoteVideo = () => {
+      if (remoteVideoRef.current && remoteStream) {
+        remoteVideoRef.current.srcObject = remoteStream;
+        remoteVideoRef.current.play().catch((err) => {
+          console.warn("Autoplay remote video caught:", err);
+        });
+      }
+      if (miniRemoteVideoRef.current && remoteStream) {
+        miniRemoteVideoRef.current.srcObject = remoteStream;
+        miniRemoteVideoRef.current.play().catch((err) => {
+          console.warn("Autoplay mini remote caught:", err);
+        });
+      }
+
+      if (remoteStream) {
+        const vTracks = remoteStream.getVideoTracks();
+        const activeVideo =
+          vTracks.length > 0 &&
+          vTracks.some((t) => t.enabled && t.readyState === "live");
+        setHasRemoteVideo(activeVideo);
+      } else {
+        setHasRemoteVideo(false);
+      }
+    };
+
+    bindRemoteVideo();
 
     if (remoteStream) {
-      const handleTrackChange = () => {
-        const vTracks = remoteStream.getVideoTracks();
-        setHasRemoteVideoTrack(vTracks.length > 0 && vTracks[0].enabled);
+      const handleTrackUpdate = () => {
+        bindRemoteVideo();
       };
-      remoteStream.addEventListener("addtrack", handleTrackChange);
-      remoteStream.addEventListener("removetrack", handleTrackChange);
+      remoteStream.addEventListener("addtrack", handleTrackUpdate);
+      remoteStream.addEventListener("removetrack", handleTrackUpdate);
+
+      // Check track unmute/mute events
+      remoteStream.getVideoTracks().forEach((track) => {
+        track.addEventListener("mute", handleTrackUpdate);
+        track.addEventListener("unmute", handleTrackUpdate);
+        track.addEventListener("ended", handleTrackUpdate);
+      });
+
       return () => {
-        remoteStream.removeEventListener("addtrack", handleTrackChange);
-        remoteStream.removeEventListener("removetrack", handleTrackChange);
+        remoteStream.removeEventListener("addtrack", handleTrackUpdate);
+        remoteStream.removeEventListener("removetrack", handleTrackUpdate);
       };
     }
   }, [remoteStream, callStatus, isMinimized]);
@@ -90,19 +115,20 @@ export function CallModal() {
 
   if (callStatus === "idle") return null;
 
-  // 1. Minimized Floating Widget Mode (PiP)
+  // 1. Minimized Floating Widget Mode (Picture-in-Picture)
   if (isMinimized && callStatus === "connected") {
     return (
       <div className="fixed bottom-6 right-6 z-50 w-64 sm:w-72 h-44 bg-[#14161F] rounded-2xl overflow-hidden shadow-2xl border border-white/15 flex flex-col animate-in slide-in-from-bottom-5 duration-300">
         <div className="relative flex-1 bg-black overflow-hidden group">
-          {remoteStream ? (
-            <video
-              ref={miniRemoteVideoRef}
-              autoPlay
-              playsInline
-              className="w-full h-full object-cover"
-            />
-          ) : (
+          {/* Always mounted to preserve audio playback */}
+          <video
+            ref={miniRemoteVideoRef}
+            autoPlay
+            playsInline
+            className={`w-full h-full object-cover ${hasRemoteVideo ? "block" : "hidden"}`}
+          />
+
+          {!hasRemoteVideo && (
             <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-b from-neutral-900 to-black text-white p-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -113,7 +139,7 @@ export function CallModal() {
                 alt={otherPerson?.name}
                 className="w-12 h-12 rounded-full object-cover ring-2 ring-[#06C755]"
               />
-              <span className="text-xs font-bold mt-1 text-neutral-200">
+              <span className="text-xs font-bold mt-1 text-neutral-200 truncate max-w-[180px]">
                 {otherPerson?.name}
               </span>
             </div>
@@ -121,7 +147,7 @@ export function CallModal() {
 
           {/* Local PiP thumbnail */}
           {localStream && !isVideoOff && (
-            <div className="absolute bottom-2 right-2 w-20 h-14 rounded-lg overflow-hidden border border-white/20 shadow-md">
+            <div className="absolute bottom-2 right-2 w-20 h-14 rounded-lg overflow-hidden border border-white/20 shadow-md bg-neutral-900">
               <video
                 ref={miniLocalVideoRef}
                 autoPlay
@@ -245,7 +271,7 @@ export function CallModal() {
             {/* Accept */}
             <div className="flex flex-col items-center gap-2">
               <button
-                onClick={acceptCall}
+                onClick={() => acceptCall()}
                 className="w-14 h-14 rounded-full bg-[#06C755] hover:bg-[#05B04B] text-white flex items-center justify-center shadow-lg shadow-[#06C755]/40 transition-transform active:scale-95 animate-bounce"
                 title="Accept"
               >
@@ -330,14 +356,14 @@ export function CallModal() {
               </span>
             </p>
           ) : (
-            <p className="text-xs text-neutral-400">No answer / Disconnected</p>
+            <p className="text-xs text-neutral-400">Disconnected</p>
           )}
         </div>
       </div>
     );
   }
 
-  // 5. Active Video Call (Full / Modal In-Call Screen)
+  // 5. Active Video Call (Full / Modal Screen)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 md:p-6 bg-black/90 backdrop-blur-xl animate-in fade-in duration-200">
       <div className="relative w-full h-full sm:max-w-5xl sm:h-[88vh] bg-[#0E1017] sm:rounded-3xl overflow-hidden shadow-2xl border border-white/10 flex flex-col select-none">
@@ -356,7 +382,7 @@ export function CallModal() {
               />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-bold text-white drop-shadow">
+              <span className="text-sm font-bold text-white drop-shadow truncate max-w-[200px]">
                 {otherPerson?.name}
               </span>
               <div className="flex items-center gap-2">
@@ -364,13 +390,13 @@ export function CallModal() {
                   <span className="w-2 h-2 rounded-full bg-[#06C755] animate-pulse" />
                   {formatDuration(callDuration)}
                 </span>
-                <span className="text-[10px] text-white/50">• Chaline P2P</span>
+                <span className="text-[10px] text-white/50">• Chaline WebRTC</span>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Minimize / PiP button */}
+            {/* Minimize button */}
             <button
               onClick={toggleMinimize}
               className="p-2.5 rounded-full bg-white/10 hover:bg-white/20 text-white backdrop-blur-md transition-all active:scale-95"
@@ -383,16 +409,19 @@ export function CallModal() {
 
         {/* Video Stage Area */}
         <div className="relative flex-1 w-full h-full bg-black flex items-center justify-center overflow-hidden">
-          {/* Main Remote Video Stream */}
-          {remoteStream ? (
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="flex flex-col items-center gap-4 text-center p-6">
+          {/* Main Remote Video Element (ALWAYS mounted to ensure audio is uninterrupted!) */}
+          <video
+            ref={remoteVideoRef}
+            autoPlay
+            playsInline
+            className={`w-full h-full object-cover transition-opacity duration-300 ${
+              hasRemoteVideo ? "opacity-100" : "opacity-0 absolute inset-0 pointer-events-none"
+            }`}
+          />
+
+          {/* Avatar Fallback Card when remote camera is off or audio-only */}
+          {!hasRemoteVideo && (
+            <div className="flex flex-col items-center gap-4 text-center p-6 z-10 animate-in fade-in duration-300">
               <div className="relative">
                 <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full overflow-hidden ring-4 ring-[#06C755]/50 bg-neutral-900 shadow-2xl">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -406,12 +435,12 @@ export function CallModal() {
                   />
                 </div>
                 <div className="absolute -bottom-2 inset-x-0 flex justify-center">
-                  <span className="px-3 py-1 rounded-full bg-black/60 backdrop-blur-md border border-white/15 text-[10px] font-bold text-neutral-300">
-                    Camera Off / Audio Only
+                  <span className="px-3 py-1 rounded-full bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-bold text-neutral-300">
+                    Camera Off / Audio Active
                   </span>
                 </div>
               </div>
-              <span className="text-sm font-semibold text-neutral-300">
+              <span className="text-sm font-semibold text-neutral-200">
                 Connected with {otherPerson?.name}
               </span>
             </div>
@@ -428,13 +457,13 @@ export function CallModal() {
                 className="w-full h-full object-cover transform -scale-x-100"
               />
             ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-900/90 text-neutral-400 gap-1 p-2 text-center">
+              <div className="w-full h-full flex flex-col items-center justify-center bg-neutral-900/95 text-neutral-400 gap-1 p-2 text-center">
                 <VideoOff className="w-6 h-6 text-neutral-500" />
                 <span className="text-[10px] font-semibold">Your Camera Off</span>
               </div>
             )}
             {isMuted && (
-              <div className="absolute top-2 left-2 p-1 rounded-full bg-red-600/80 text-white">
+              <div className="absolute top-2 left-2 p-1 rounded-full bg-red-600 text-white shadow">
                 <MicOff className="w-3 h-3" />
               </div>
             )}

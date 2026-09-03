@@ -457,10 +457,10 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={
-                  otherUser.avatar ||
+                  otherUser?.avatar ||
                   "https://api.dicebear.com/7.x/bottts/svg?seed=User"
                 }
-                alt={otherUser.name}
+                alt={otherUser?.name || "User"}
                 className="w-full h-full object-cover rounded-full ring-2 ring-[#06C755]"
               />
               {/* Online Presence Indicator Badge */}
@@ -594,10 +594,11 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={
-                        msg.sender.avatar ||
+                        msg.sender?.avatar ||
+                        otherUser?.avatar ||
                         "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"
                       }
-                      alt={msg.sender.name}
+                      alt={msg.sender?.name || otherUser?.name || "Friend"}
                       className="w-full h-full object-cover"
                     />
                   </div>
@@ -736,8 +737,8 @@ export function ChatArea({ onBackMobile }: ChatAreaProps) {
             <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0 ring-1 ring-black/[0.08] dark:ring-white/[0.1]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={otherUser.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
-                alt={otherUser.name}
+                src={otherUser?.avatar || "https://api.dicebear.com/7.x/bottts/svg?seed=Friend"}
+                alt={otherUser?.name || "Friend"}
                 className="w-full h-full object-cover"
               />
             </div>

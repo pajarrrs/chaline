@@ -52,13 +52,12 @@ export function playIncomingRingtone() {
       if (ctx.state === "suspended") ctx.resume().catch(() => {});
       const now = ctx.currentTime;
 
-      // Melodic notes sequence: E5 (659.25), G#5 (830.61), B5 (987.77), E6 (1318.51)
+      // Melodic notes sequence: E5, G#5, B5, E6
       const notes = [
         { freq: 659.25, time: 0, dur: 0.16 },
         { freq: 830.61, time: 0.18, dur: 0.16 },
         { freq: 987.77, time: 0.36, dur: 0.16 },
         { freq: 1318.51, time: 0.54, dur: 0.4 },
-
         { freq: 987.77, time: 1.1, dur: 0.16 },
         { freq: 1318.51, time: 1.28, dur: 0.45 },
       ];
@@ -76,6 +75,14 @@ export function playIncomingRingtone() {
 
         osc.connect(gain);
         gain.connect(ctx.destination);
+
+        osc.onended = () => {
+          activeOscillators = activeOscillators.filter((o) => o !== osc);
+          try {
+            osc.disconnect();
+            gain.disconnect();
+          } catch {}
+        };
 
         osc.start(now + time);
         osc.stop(now + time + dur + 0.05);
@@ -120,6 +127,19 @@ export function playOutgoingRingback() {
       osc2.connect(gain);
       gain.connect(ctx.destination);
 
+      const cleanup = () => {
+        activeOscillators = activeOscillators.filter(
+          (o) => o !== osc1 && o !== osc2
+        );
+        try {
+          osc1.disconnect();
+          osc2.disconnect();
+          gain.disconnect();
+        } catch {}
+      };
+
+      osc1.onended = cleanup;
+
       osc1.start(now);
       osc2.start(now);
       osc1.stop(now + 2.0);
@@ -160,6 +180,13 @@ export function playCallEndTone() {
 
       osc.connect(gain);
       gain.connect(ctx.destination);
+
+      osc.onended = () => {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch {}
+      };
 
       osc.start(now + time);
       osc.stop(now + time + 0.16);

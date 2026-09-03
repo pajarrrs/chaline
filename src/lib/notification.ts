@@ -146,18 +146,32 @@ export async function showBrowserNotification(
     body?: string;
     icon?: string;
     tag?: string;
+    requireInteraction?: boolean;
+    vibrate?: number[];
   }
-) {
-  if (typeof window === "undefined" || !("Notification" in window)) return;
+): Promise<Notification | null> {
+  if (typeof window === "undefined" || !("Notification" in window)) return null;
 
-  if (Notification.permission !== "granted") return;
+  if (Notification.permission !== "granted") {
+    if (Notification.permission === "default") {
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm !== "granted") return null;
+      } catch {
+        return null;
+      }
+    } else {
+      return null;
+    }
+  }
 
   const notifOptions: any = {
     body: options?.body || "New message received",
     icon: options?.icon || "/icons/icon-192x192.png",
     badge: "/icons/icon-192x192.png",
     tag: options?.tag || `chaline-${Date.now()}`,
-    vibrate: [200, 100, 200],
+    vibrate: options?.vibrate || [200, 100, 200],
+    requireInteraction: options?.requireInteraction ?? false,
   };
 
   // 1. Android Mobile Chrome & PWA: Requires ServiceWorkerRegistration.showNotification()!
@@ -166,7 +180,7 @@ export async function showBrowserNotification(
       const reg = await navigator.serviceWorker.ready;
       if (reg && typeof reg.showNotification === "function") {
         await reg.showNotification(title, notifOptions);
-        return;
+        return null;
       }
     } catch {}
   }
@@ -178,5 +192,22 @@ export async function showBrowserNotification(
       window.focus();
       notif.close();
     };
-  } catch {}
+    return notif;
+  } catch {
+    return null;
+  }
+}
+
+// Close an active notification by tag
+export async function closeBrowserNotification(tag: string) {
+  if (typeof window === "undefined") return;
+  if ("serviceWorker" in navigator) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && typeof reg.getNotifications === "function") {
+        const list = await reg.getNotifications({ tag });
+        list.forEach((n) => n.close());
+      }
+    } catch {}
+  }
 }

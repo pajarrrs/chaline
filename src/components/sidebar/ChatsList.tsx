@@ -23,16 +23,17 @@ export function ChatsList() {
   const isDark = resolvedTheme === "dark";
 
   const filteredConversations = conversations.filter((conv) => {
+    if (!conv || !conv.participants) return false;
     const otherParticipant = conv.participants.find(
-      (p) => p.userId !== user?.id
+      (p) => p && p.userId !== user?.id
     );
-    if (!otherParticipant) return false;
+    if (!otherParticipant || !otherParticipant.user) return false;
 
     const q = search.toLowerCase();
     return (
-      otherParticipant.user.name.toLowerCase().includes(q) ||
-      otherParticipant.user.lineId.toLowerCase().includes(q) ||
-      conv.lastMessage?.content.toLowerCase().includes(q)
+      (otherParticipant.user.name || "").toLowerCase().includes(q) ||
+      (otherParticipant.user.lineId || "").toLowerCase().includes(q) ||
+      (conv.lastMessage?.content || "").toLowerCase().includes(q)
     );
   });
 
@@ -137,8 +138,8 @@ export function ChatsList() {
           </div>
         ) : (
           filteredConversations.map((conv) => {
-            const otherParticipant = conv.participants.find(
-              (p) => p.userId !== user?.id
+            const otherParticipant = conv.participants?.find(
+              (p) => p && p.userId !== user?.id
             );
             const otherUser = otherParticipant?.user;
             const isSelected = activeConversation?.id === conv.id;

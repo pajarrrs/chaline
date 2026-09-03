@@ -10,13 +10,17 @@ import React, {
 } from "react";
 import { useAuth } from "./AuthContext";
 import { supabase } from "@/lib/supabase";
-import { CallStatus, CallUser } from "@/types/call";
+import { CallStatus, CallUser, CallSignalData } from "@/types/call";
 import {
   playIncomingRingtone,
   playOutgoingRingback,
   playCallEndTone,
   stopAllCallSounds,
 } from "@/lib/callSounds";
+import {
+  showBrowserNotification,
+  closeBrowserNotification,
+} from "@/lib/notification";
 
 interface CallContextType {
   callStatus: CallStatus;
@@ -50,7 +54,9 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun3.l.google.com:19302" },
     { urls: "stun:stun4.l.google.com:19302" },
+    { urls: "stun:stun.services.mozilla.com" },
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export function CallProvider({ children }: { children: React.ReactNode }) {
@@ -71,24 +77,149 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
   const [isMinimized, setIsMinimized] = useState(false);
   const [callDuration, setCallDuration] = useState(0);
 
-  // References for WebRTC and signaling
+  // References to eliminate stale closure bugs in realtime listeners
+  const callStatusRef = useRef<CallStatus>("idle");
+  const callIdRef = useRef<string | null>(null);
+  const callerRef = useRef<CallUser | null>(null);
+  const targetUserRef = useRef<CallUser | null>(null);
+  const isVideoRef = useRef<boolean>(true);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const userChannelRef = useRef<any>(null);
-  const roomChannelRef = useRef<any>(null);
+  const queuedCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
+  const channelRef = useRef<any>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const callTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingIceCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const cameraTrackRef = useRef<MediaStreamTrack | null>(null);
 
-  // Sync ref with local stream
+  // Notification and tab title flashing refs
+  const activeNotifRef = useRef<Notification | null>(null);
+  const titleIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const originalTitleRef = useRef<string>("");
+
+  // Keep refs in sync with state
+  useEffect(() => {
+    callStatusRef.current = callStatus;
+  }, [callStatus]);
+
+  useEffect(() => {
+    callIdRef.current = callId;
+  }, [callId]);
+
+  useEffect(() => {
+    callerRef.current = caller;
+  }, [caller]);
+
+  useEffect(() => {
+    targetUserRef.current = targetUser;
+  }, [targetUser]);
+
+  useEffect(() => {
+    isVideoRef.current = isVideo;
+  }, [isVideo]);
+
   useEffect(() => {
     localStreamRef.current = localStream;
   }, [localStream]);
 
-  // Clean up streams & peer connection
-  const cleanupMediaAndPeer = useCallback(() => {
+  // Broadcast signal over persistent calls channel
+  const broadcastSignal = useCallback((payload: CallSignalData) => {
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "call_signal",
+        payload,
+      });
+    }
+  }, []);
+
+  // Flush queued ICE candidates after setRemoteDescription
+  const flushQueuedCandidates = async (pc: RTCPeerConnection) => {
+    const queue = [...queuedCandidatesRef.current];
+    queuedCandidatesRef.current = [];
+    for (const cand of queue) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (e) {
+        console.warn("Failed adding queued candidate:", e);
+      }
+    }
+  };
+
+  // Start incoming call alert (sound, tab title flash, browser push notification)
+  const startIncomingCallAlert = useCallback(
+    (callerUser: CallUser, isVideoMode: boolean, cId: string) => {
+      // 1. Web Audio ringtone
+      playIncomingRingtone();
+
+      // 2. Tab title flashing
+      if (typeof document !== "undefined") {
+        if (!originalTitleRef.current) {
+          originalTitleRef.current = document.title || "Chaline Messenger";
+        }
+        let flash = false;
+        if (titleIntervalRef.current) clearInterval(titleIntervalRef.current);
+        titleIntervalRef.current = setInterval(() => {
+          document.title = flash
+            ? `📞 (1) ${callerUser.name} Calling...`
+            : `🟢 Incoming Call - Chaline`;
+          flash = !flash;
+        }, 1000);
+      }
+
+      // 3. System / Browser Native Push Notification
+      showBrowserNotification(
+        `📞 Incoming ${isVideoMode ? "Video Call" : "Voice Call"}!`,
+        {
+          body: `${callerUser.name} (@${callerUser.lineId}) is calling you. Click to answer!`,
+          icon: callerUser.avatar || "/icons/icon-192x192.png",
+          tag: `call-${cId}`,
+          requireInteraction: true,
+          vibrate: [300, 150, 300, 150, 300],
+        }
+      ).then((notif) => {
+        activeNotifRef.current = notif;
+      });
+    },
+    []
+  );
+
+  // Stop incoming call alert
+  const stopIncomingCallAlert = useCallback((cId?: string) => {
     stopAllCallSounds();
+
+    // Restore title
+    if (titleIntervalRef.current) {
+      clearInterval(titleIntervalRef.current);
+      titleIntervalRef.current = null;
+    }
+    if (typeof document !== "undefined" && originalTitleRef.current) {
+      document.title = originalTitleRef.current;
+    }
+
+    // Close notification
+    if (activeNotifRef.current) {
+      try {
+        activeNotifRef.current.close();
+      } catch {}
+      activeNotifRef.current = null;
+    }
+    if (cId) {
+      closeBrowserNotification(`call-${cId}`);
+    }
+  }, []);
+
+  // Request browser notification permission automatically on initial mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      if (Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+      }
+    }
+  }, []);
+
+  // Clean up all media tracks, peer connections, and timers
+  const cleanupMediaAndPeer = useCallback(() => {
+    stopIncomingCallAlert(callIdRef.current || undefined);
 
     if (callTimeoutRef.current) {
       clearTimeout(callTimeoutRef.current);
@@ -101,9 +232,9 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((t) => {
+      localStreamRef.current.getTracks().forEach((track) => {
         try {
-          t.stop();
+          track.stop();
         } catch {}
       });
     }
@@ -122,14 +253,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       peerConnectionRef.current = null;
     }
 
-    if (roomChannelRef.current && supabase) {
-      try {
-        supabase.removeChannel(roomChannelRef.current);
-      } catch {}
-      roomChannelRef.current = null;
-    }
-
-    pendingIceCandidatesRef.current = [];
+    queuedCandidatesRef.current = [];
     setLocalStream(null);
     setRemoteStream(null);
     setIsMuted(false);
@@ -139,8 +263,13 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
     setCallDuration(0);
   }, []);
 
-  // Request user camera and microphone
+  // Request camera and microphone media streams
   const acquireMediaStream = async (videoRequired: boolean): Promise<MediaStream | null> => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      alert("Camera/microphone is not supported or site is not on a secure context (localhost or HTTPS).");
+      return null;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -167,26 +296,42 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       return stream;
     } catch (err: any) {
-      console.warn("Could not get requested media:", err);
-      // If video failed, try audio only
+      console.warn("Failed primary getUserMedia:", err);
+
+      // If video failed, try fallback to audio only
       if (videoRequired) {
         try {
-          const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+            },
+            video: false,
+          });
           setLocalStream(audioStream);
           localStreamRef.current = audioStream;
           setIsVideoOff(true);
           return audioStream;
-        } catch (audioErr) {
-          console.error("Microphone access also failed:", audioErr);
+        } catch (audioErr: any) {
+          console.error("Microphone fallback also failed:", audioErr);
         }
       }
+
+      if (err.name === "NotAllowedError" || err.name === "PermissionDeniedError") {
+        alert("Camera/Microphone access was denied. Please allow permissions in your browser.");
+      } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+        alert("No camera or microphone found on your device.");
+      } else {
+        alert("Unable to access camera/mic: " + (err.message || err.name));
+      }
+
       return null;
     }
   };
 
-  // Create & configure RTCPeerConnection
+  // Create and configure RTCPeerConnection
   const setupPeerConnection = useCallback(
-    (currentCallId: string, currentTargetUserId: string): RTCPeerConnection => {
+    (cId: string, otherUserId: string): RTCPeerConnection => {
       if (peerConnectionRef.current) {
         try {
           peerConnectionRef.current.close();
@@ -196,17 +341,15 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       const pc = new RTCPeerConnection(RTC_CONFIG);
       peerConnectionRef.current = pc;
 
-      // Handle ICE candidates
+      // Handle local ICE candidates
       pc.onicecandidate = (event) => {
-        if (event.candidate && roomChannelRef.current) {
-          roomChannelRef.current.send({
-            type: "broadcast",
-            event: "call_candidate",
-            payload: {
-              callId: currentCallId,
-              senderId: user?.id,
-              candidate: event.candidate.toJSON(),
-            },
+        if (event.candidate && user) {
+          broadcastSignal({
+            type: "call_candidate",
+            callId: cId,
+            targetUserId: otherUserId,
+            senderId: user.id,
+            candidate: event.candidate.toJSON(),
           });
         }
       };
@@ -224,7 +367,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           stopAllCallSounds();
           setCallStatus("connected");
 
-          // Start call duration timer
+          // Start duration timer
           if (!timerRef.current) {
             timerRef.current = setInterval(() => {
               setCallDuration((prev) => prev + 1);
@@ -235,8 +378,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           pc.connectionState === "failed" ||
           pc.connectionState === "closed"
         ) {
-          // If remote peer disconnected
-          if (callStatus === "connected") {
+          if (callStatusRef.current === "connected") {
             playCallEndTone();
             setCallStatus("ended");
             setTimeout(() => {
@@ -252,81 +394,230 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
       return pc;
     },
-    [user, callStatus, cleanupMediaAndPeer]
+    [user, broadcastSignal, cleanupMediaAndPeer]
   );
 
-  // Setup room channel for signaling during active call
-  const subscribeToRoomChannel = useCallback(
-    (cId: string, onReady?: () => void) => {
-      if (!supabase) return null;
-      if (roomChannelRef.current) {
-        supabase.removeChannel(roomChannelRef.current);
+  // Single Persistent Supabase Realtime Channel for all call signaling
+  useEffect(() => {
+    if (!user || !supabase) return;
+
+    const channel = supabase.channel("chaline-realtime-calls", {
+      config: { broadcast: { self: false } },
+    });
+
+    channel.on("broadcast", { event: "call_signal" }, async (payload) => {
+      const data = payload?.payload as CallSignalData;
+      if (!data || data.targetUserId !== user.id) return;
+
+      // 1. Incoming Call Invitation
+      if (data.type === "call_invite") {
+        // If user is busy with another call, reply busy immediately
+        if (callStatusRef.current !== "idle") {
+          broadcastSignal({
+            type: "call_response",
+            callId: data.callId,
+            targetUserId: data.caller.id,
+            senderId: user.id,
+            accepted: false,
+            reason: "busy",
+          });
+          return;
+        }
+
+        setCallId(data.callId);
+        setCaller(data.caller);
+        setIsVideo(data.isVideo);
+        setCallStatus("incoming");
+        startIncomingCallAlert(data.caller, data.isVideo, data.callId);
       }
 
-      const room = supabase.channel(`chaline-call-room-${cId}`, {
-        config: { broadcast: { self: false } },
-      });
+      // 2. Call Response (Accepted / Declined)
+      else if (data.type === "call_response") {
+        if (data.callId !== callIdRef.current) return;
 
-      // SDP Offer / Answer
-      room.on("broadcast", { event: "call_sdp" }, async (payload) => {
-        const { sdp, senderId } = payload?.payload || {};
-        if (senderId === user?.id || !sdp) return;
+        if (data.accepted) {
+          stopAllCallSounds();
 
+          if (callTimeoutRef.current) {
+            clearTimeout(callTimeoutRef.current);
+            callTimeoutRef.current = null;
+          }
+
+          // Peer accepted -> create and send SDP offer
+          const pc = peerConnectionRef.current;
+          if (pc && targetUserRef.current) {
+            try {
+              const offer = await pc.createOffer();
+              await pc.setLocalDescription(offer);
+
+              broadcastSignal({
+                type: "call_sdp",
+                callId: data.callId,
+                targetUserId: targetUserRef.current.id,
+                senderId: user.id,
+                sdp: offer,
+              });
+            } catch (e) {
+              console.error("Failed creating SDP offer:", e);
+            }
+          }
+        } else {
+          // Call was declined or cancelled or busy
+          stopAllCallSounds();
+          playCallEndTone();
+          setCallStatus("ended");
+          setTimeout(() => {
+            cleanupMediaAndPeer();
+            setCallStatus("idle");
+            setCallId(null);
+            setCaller(null);
+            setTargetUser(null);
+          }, 1500);
+        }
+      }
+
+      // 3. WebRTC SDP (Offer / Answer)
+      else if (data.type === "call_sdp") {
+        if (data.callId !== callIdRef.current) return;
         const pc = peerConnectionRef.current;
-        if (!pc) return;
+        if (!pc || !data.sdp) return;
 
         try {
-          if (sdp.type === "offer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            // Drain any pending candidates
-            for (const c of pendingIceCandidatesRef.current) {
-              await pc.addIceCandidate(new RTCIceCandidate(c));
-            }
-            pendingIceCandidatesRef.current = [];
+          if (data.sdp.type === "offer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            await flushQueuedCandidates(pc);
 
             const answer = await pc.createAnswer();
             await pc.setLocalDescription(answer);
 
-            room.send({
-              type: "broadcast",
-              event: "call_sdp",
-              payload: { callId: cId, senderId: user?.id, sdp: answer },
+            broadcastSignal({
+              type: "call_sdp",
+              callId: data.callId,
+              targetUserId: data.senderId,
+              senderId: user.id,
+              sdp: answer,
             });
-          } else if (sdp.type === "answer") {
-            await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-            // Drain any pending candidates
-            for (const c of pendingIceCandidatesRef.current) {
-              await pc.addIceCandidate(new RTCIceCandidate(c));
-            }
-            pendingIceCandidatesRef.current = [];
+          } else if (data.sdp.type === "answer") {
+            await pc.setRemoteDescription(new RTCSessionDescription(data.sdp));
+            await flushQueuedCandidates(pc);
           }
         } catch (e) {
-          console.error("Error setting remote SDP:", e);
+          console.error("Error setting remote description:", e);
         }
-      });
+      }
 
-      // ICE Candidates
-      room.on("broadcast", { event: "call_candidate" }, async (payload) => {
-        const { candidate, senderId } = payload?.payload || {};
-        if (senderId === user?.id || !candidate) return;
-
+      // 4. WebRTC ICE Candidate
+      else if (data.type === "call_candidate") {
+        if (data.callId !== callIdRef.current) return;
         const pc = peerConnectionRef.current;
         if (pc && pc.remoteDescription && pc.remoteDescription.type) {
           try {
-            await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
           } catch (e) {
-            console.warn("Error adding ICE candidate:", e);
+            console.warn("Failed adding ICE candidate directly:", e);
           }
         } else {
-          pendingIceCandidatesRef.current.push(candidate);
+          queuedCandidatesRef.current.push(data.candidate);
         }
-      });
+      }
 
-      // Call Hangup by peer
-      room.on("broadcast", { event: "call_end" }, (payload) => {
-        const { senderId } = payload?.payload || {};
-        if (senderId === user?.id) return;
+      // 5. Call Hangup / Terminate by peer
+      else if (data.type === "call_end") {
+        if (data.callId !== callIdRef.current) return;
+        const wasIncoming = callStatusRef.current === "incoming";
+        const incomingCaller = callerRef.current;
 
+        stopIncomingCallAlert(data.callId);
+        playCallEndTone();
+        setCallStatus("ended");
+
+        // If receiver never answered (missed call), show missed call notification
+        if (wasIncoming && incomingCaller) {
+          showBrowserNotification("📞 Missed Call", {
+            body: `You missed a call from ${incomingCaller.name}.`,
+            icon: incomingCaller.avatar || "/icons/icon-192x192.png",
+            tag: `missed-${data.callId}`,
+          });
+        }
+
+        setTimeout(() => {
+          cleanupMediaAndPeer();
+          setCallStatus("idle");
+          setCallId(null);
+          setCaller(null);
+          setTargetUser(null);
+        }, 1200);
+      }
+    });
+
+    channel.subscribe();
+    channelRef.current = channel;
+
+    return () => {
+      if (supabase && channelRef.current) {
+        supabase.removeChannel(channelRef.current);
+      }
+    };
+  }, [user, broadcastSignal, cleanupMediaAndPeer]);
+
+  // Initiate an outgoing call
+  const startCall = async (target: CallUser, videoMode = true) => {
+    if (!user || !supabase) {
+      alert("Unable to initiate call: Service unavailable");
+      return;
+    }
+
+    // Reset previous call state
+    cleanupMediaAndPeer();
+
+    const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+    setCallId(newCallId);
+    setTargetUser(target);
+    setIsVideo(videoMode);
+    setCallStatus("calling");
+
+    // 1. Acquire media stream
+    const stream = await acquireMediaStream(videoMode);
+    if (!stream) {
+      setCallStatus("idle");
+      return;
+    }
+
+    // 2. Setup RTCPeerConnection and attach tracks
+    const pc = setupPeerConnection(newCallId, target.id);
+    stream.getTracks().forEach((track) => {
+      pc.addTrack(track, stream);
+    });
+
+    // 3. Play ringback tone
+    playOutgoingRingback();
+
+    // 4. Send call invite
+    broadcastSignal({
+      type: "call_invite",
+      callId: newCallId,
+      caller: {
+        id: user.id,
+        name: user.name,
+        lineId: user.lineId,
+        avatar: user.avatar,
+      },
+      targetUserId: target.id,
+      isVideo: videoMode,
+      createdAt: Date.now(),
+    });
+
+    // 5. Timeout if receiver does not answer within 35 seconds
+    callTimeoutRef.current = setTimeout(() => {
+      if (callStatusRef.current === "calling") {
+        broadcastSignal({
+          type: "call_end",
+          callId: newCallId,
+          targetUserId: target.id,
+          senderId: user.id,
+          reason: "timeout",
+        });
+        stopAllCallSounds();
         playCallEndTone();
         setCallStatus("ended");
         setTimeout(() => {
@@ -336,203 +627,22 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           setCaller(null);
           setTargetUser(null);
         }, 1500);
-      });
-
-      room.subscribe((status) => {
-        if (status === "SUBSCRIBED" && onReady) {
-          onReady();
-        }
-      });
-
-      roomChannelRef.current = room;
-      return room;
-    },
-    [user, cleanupMediaAndPeer]
-  );
-
-  // Listen to personal calls channel for incoming invites & responses
-  useEffect(() => {
-    if (!user || !supabase) return;
-
-    const channelName = `chaline-user-call-${user.id}`;
-    const userChannel = supabase.channel(channelName, {
-      config: { broadcast: { self: false } },
-    });
-
-    // 1. Incoming Call Invitation
-    userChannel.on("broadcast", { event: "call_invite" }, (payload) => {
-      const data = payload?.payload;
-      if (!data) return;
-
-      // If user is already in a call, notify caller that user is busy
-      if (callStatus !== "idle") {
-        const sb = supabase;
-        if (sb) {
-          const replyChan = sb.channel(`chaline-user-call-${data.caller.id}`);
-          replyChan.subscribe((s) => {
-            if (s === "SUBSCRIBED") {
-              replyChan.send({
-                type: "broadcast",
-                event: "call_response",
-                payload: {
-                  callId: data.callId,
-                  fromUserId: user.id,
-                  accepted: false,
-                  reason: "busy",
-                },
-              });
-              setTimeout(() => sb.removeChannel(replyChan), 1000);
-            }
-          });
-        }
-        return;
-      }
-
-      setCallId(data.callId);
-      setCaller(data.caller);
-      setIsVideo(data.isVideo);
-      setCallStatus("incoming");
-      playIncomingRingtone();
-    });
-
-    // 2. Call Response from receiver (Accepted or Declined)
-    userChannel.on("broadcast", { event: "call_response" }, async (payload) => {
-      const data = payload?.payload;
-      if (!data) return;
-
-      if (data.accepted) {
-        stopAllCallSounds();
-
-        // Connect room channel and start WebRTC SDP offer
-        subscribeToRoomChannel(data.callId, async () => {
-          const pc = peerConnectionRef.current;
-          if (!pc || !roomChannelRef.current) return;
-
-          try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-
-            roomChannelRef.current.send({
-              type: "broadcast",
-              event: "call_sdp",
-              payload: {
-                callId: data.callId,
-                senderId: user.id,
-                sdp: offer,
-              },
-            });
-          } catch (e) {
-            console.error("Failed to create offer:", e);
-          }
-        });
-      } else {
-        // Call was declined or user was busy
-        playCallEndTone();
-        setCallStatus("ended");
-        setTimeout(() => {
-          cleanupMediaAndPeer();
-          setCallStatus("idle");
-          setCallId(null);
-          setCaller(null);
-          setTargetUser(null);
-        }, 2000);
-      }
-    });
-
-    userChannel.subscribe();
-    userChannelRef.current = userChannel;
-
-    return () => {
-      if (supabase && userChannelRef.current) {
-        supabase.removeChannel(userChannelRef.current);
-      }
-    };
-  }, [user, callStatus, cleanupMediaAndPeer, subscribeToRoomChannel]);
-
-  // Initiate an outgoing call
-  const startCall = async (target: CallUser, videoMode = true) => {
-    if (!user || !supabase) {
-      alert("Unable to initiate call: Service unavailable");
-      return;
-    }
-
-    // Reset any existing state
-    cleanupMediaAndPeer();
-
-    const newCallId = `call_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-    setCallId(newCallId);
-    setTargetUser(target);
-    setIsVideo(videoMode);
-    setCallStatus("calling");
-
-    // Acquire camera / mic
-    const stream = await acquireMediaStream(videoMode);
-    if (!stream) {
-      alert("Please allow camera/microphone permissions to make a call.");
-      setCallStatus("idle");
-      return;
-    }
-
-    // Prepare RTCPeerConnection and attach tracks
-    const pc = setupPeerConnection(newCallId, target.id);
-    stream.getTracks().forEach((track) => {
-      pc.addTrack(track, stream);
-    });
-
-    // Play ringback sound (calling...)
-    playOutgoingRingback();
-
-    // Send call invite to target user's personal channel
-    const sb = supabase;
-    const targetChannel = sb.channel(`chaline-user-call-${target.id}`);
-    targetChannel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        targetChannel.send({
-          type: "broadcast",
-          event: "call_invite",
-          payload: {
-            callId: newCallId,
-            caller: {
-              id: user.id,
-              name: user.name,
-              lineId: user.lineId,
-              avatar: user.avatar,
-            },
-            targetUserId: target.id,
-            isVideo: videoMode,
-            createdAt: Date.now(),
-          },
-        });
-        setTimeout(() => sb.removeChannel(targetChannel), 1500);
-      }
-    });
-
-    // Timeout if receiver does not pick up after 35 seconds
-    callTimeoutRef.current = setTimeout(() => {
-      if (callStatus === "calling") {
-        playCallEndTone();
-        setCallStatus("ended");
-        setTimeout(() => {
-          cleanupMediaAndPeer();
-          setCallStatus("idle");
-          setCallId(null);
-          setCaller(null);
-          setTargetUser(null);
-        }, 2000);
       }
     }, 35000);
   };
 
   // Accept incoming call
   const acceptCall = async () => {
-    if (!callId || !caller || !user || !supabase) return;
+    const currentCallId = callIdRef.current;
+    const currentCaller = callerRef.current;
+    if (!currentCallId || !currentCaller || !user) return;
 
-    stopAllCallSounds();
+    stopIncomingCallAlert(currentCallId);
     setCallStatus("connected");
 
-    // Acquire camera & mic
-    const stream = await acquireMediaStream(isVideo);
-    const pc = setupPeerConnection(callId, caller.id);
+    // 1. Acquire camera and mic
+    const stream = await acquireMediaStream(isVideoRef.current);
+    const pc = setupPeerConnection(currentCallId, currentCaller.id);
 
     if (stream) {
       stream.getTracks().forEach((track) => {
@@ -540,57 +650,34 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // Subscribe to room channel for WebRTC signaling
-    subscribeToRoomChannel(callId);
-
-    // Send accept response to caller's personal channel
-    const sb = supabase;
-    const callerChannel = sb.channel(`chaline-user-call-${caller.id}`);
-    callerChannel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        callerChannel.send({
-          type: "broadcast",
-          event: "call_response",
-          payload: {
-            callId,
-            fromUserId: user.id,
-            accepted: true,
-          },
-        });
-        setTimeout(() => sb.removeChannel(callerChannel), 1500);
-      }
+    // 2. Notify caller that call was accepted
+    broadcastSignal({
+      type: "call_response",
+      callId: currentCallId,
+      targetUserId: currentCaller.id,
+      senderId: user.id,
+      accepted: true,
     });
   };
 
   // Reject incoming call
   const rejectCall = (reason = "declined") => {
-    if (!callId || !caller || !user || !supabase) {
-      cleanupMediaAndPeer();
-      setCallStatus("idle");
-      return;
-    }
+    const currentCallId = callIdRef.current;
+    const currentCaller = callerRef.current;
 
-    stopAllCallSounds();
+    stopIncomingCallAlert(currentCallId || undefined);
     playCallEndTone();
 
-    // Send decline response to caller's channel
-    const sb = supabase;
-    const callerChannel = sb.channel(`chaline-user-call-${caller.id}`);
-    callerChannel.subscribe((status) => {
-      if (status === "SUBSCRIBED") {
-        callerChannel.send({
-          type: "broadcast",
-          event: "call_response",
-          payload: {
-            callId,
-            fromUserId: user.id,
-            accepted: false,
-            reason,
-          },
-        });
-        setTimeout(() => sb.removeChannel(callerChannel), 1500);
-      }
-    });
+    if (currentCallId && currentCaller && user) {
+      broadcastSignal({
+        type: "call_response",
+        callId: currentCallId,
+        targetUserId: currentCaller.id,
+        senderId: user.id,
+        accepted: false,
+        reason: reason as any,
+      });
+    }
 
     cleanupMediaAndPeer();
     setCallStatus("idle");
@@ -601,38 +688,18 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
 
   // End active or outgoing call
   const endCall = () => {
+    const currentCallId = callIdRef.current;
+    const target = targetUserRef.current || callerRef.current;
+
+    stopIncomingCallAlert(currentCallId || undefined);
     playCallEndTone();
 
-    // Notify peer via room channel
-    if (roomChannelRef.current) {
-      roomChannelRef.current.send({
-        type: "broadcast",
-        event: "call_end",
-        payload: {
-          callId,
-          senderId: user?.id,
-        },
-      });
-    }
-
-    // If caller ends while still in "calling" state, send reject to receiver so receiver's phone stops ringing
-    if (callStatus === "calling" && targetUser && supabase && user) {
-      const sb = supabase;
-      const targetChan = sb.channel(`chaline-user-call-${targetUser.id}`);
-      targetChan.subscribe((s) => {
-        if (s === "SUBSCRIBED") {
-          targetChan.send({
-            type: "broadcast",
-            event: "call_response",
-            payload: {
-              callId,
-              fromUserId: user.id,
-              accepted: false,
-              reason: "cancelled",
-            },
-          });
-          setTimeout(() => sb.removeChannel(targetChan), 1500);
-        }
+    if (currentCallId && target && user) {
+      broadcastSignal({
+        type: "call_end",
+        callId: currentCallId,
+        targetUserId: target.id,
+        senderId: user.id,
       });
     }
 
@@ -678,7 +745,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
         if (videoSender) {
           await videoSender.replaceTrack(cameraTrackRef.current);
         }
-        // Remove screen track from local stream and add back camera track
         const currentScreenTrack = localStreamRef.current.getVideoTracks()[0];
         if (currentScreenTrack) {
           currentScreenTrack.stop();
@@ -689,7 +755,7 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
       }
     } else {
       try {
-        if (!navigator.mediaDevices.getDisplayMedia) {
+        if (!navigator.mediaDevices?.getDisplayMedia) {
           alert("Screen sharing is not supported on this device/browser.");
           return;
         }
@@ -706,7 +772,6 @@ export function CallProvider({ children }: { children: React.ReactNode }) {
           await videoSender.replaceTrack(screenTrack);
         }
 
-        // When user clicks "Stop Sharing" from browser native chrome bar
         screenTrack.onended = () => {
           if (cameraTrackRef.current && videoSender) {
             videoSender.replaceTrack(cameraTrackRef.current);
